@@ -1,0 +1,105 @@
+# LE1 Root — CVE-2019-2215 exploit research (MT6580 / Android 8.1)
+
+Root exploit development for the **LE1 car head unit** (LeTV-branded `gwi_dnyb`, MediaTek
+MT6580M, Android 8.1.0, Linux kernel 3.18.79 armv7l 32-bit).
+
+## Status: exploit ~95% complete (one 1-byte fix verified offline, needs 1 re-run)
+
+The full ARM32 CVE-2019-2215 root chain is implemented in `exploit/le1_root.c`.
+The correct device offsets are derived and applied. The last observed run leaked a task
+pointer **1 byte early** (`0x00dbd3e1`) — the `preUafBytes=1` shift is now subtracted
+(`taskOff = 0xDB`). One re-run should complete phase1 → root.
+
+## Quick start (when device is online)
+
+```bash
+# device: Le1 on Tailscale, SSH u0_a50@100.124.251.81 -p 8022
+cat exploit/le1_root.c | ssh u0_a50@100.124.251.81 -p 8022 'cat > le1_root.c'
+ssh u0_a50@100.124.251.81 -p 8022 'clang -O2 -o le1_root le1_root.c && ./le1_root'
+# on success: spawns /system/bin/sh as root; then remount /system rw + drop su (permanent)
+```
+
+## Device facts (verified)
+
+| Property | Value |
+|---|---|
+| SoC | MediaTek MT6580M (ARMv7, 32-bit) |
+| OS / kernel | Android 8.1.0 / 3.18.79 #8 (Aug 2020), armv7l |
+| Build | `full_gwi_dnyb` (Le1 / gwi_dnyb), incremental 1598252866 |
+| Security patch | 2018-10-05 (CVE-2019-2215 unpatched) |
+| SELinux | Permissive |
+| KASLR | none (kernel base fixed) |
+| dm-verity | not active (can remount /system rw once root) |
+| adbd | production build (no `adb root`) |
+| Kernel lowmem | 0xC0000000+ (VMSPLIT_3G, p2v offset 0x40000000) |
+| kallsyms | 41312 symbols, but kptr_restrict=2 (addresses zeroed) |
+
+## Correct binder_thread offsets (ARM32) — the key finding
+
+`struct binder_error { struct binder_work work; uint32_t cmd; }` where
+`binder_work = {list_head(8) + enum(4)} = 12 bytes` → **binder_error = 16 bytes** (not 8).
+
+```
+struct binder_thread {                       // sizeof = 0x134 (308)
+    struct binder_proc *proc;                // 0x00
+    struct rb_node rb_node;                  // 0x04 (12)
+    struct list_head waiting_thread_node;    // 0x10 (8)
+    int pid;                                 // 0x18
+    int looper;                              // 0x1C
+    bool looper_need_return;                 // 0x20 (1,pad)
+    struct binder_transaction *transaction_stack; // 0x24
+    struct list_head todo;                   // 0x28 (8)
+    struct binder_error return_error;        // 0x30 (16)
+    struct binder_error reply_error;         // 0x40 (16)
+    wait_queue_head_t wait;                  // 0x50 (12)  <-- WAITQUEUE_OFFSET
+    struct binder_stats stats;               // 0x5C (0xCC=204)
+    atomic_t tmp_ref;                        // 0x128
+    bool is_dead;                            // 0x12C
+    struct task_struct *task;                // 0x130  <-- survives iovec reclaim
+};
+```
+
+**Constants:** `BINDER_THREAD_SZ=0x134`, `WAITQUEUE_OFFSET=0x50`,
+`IOVEC_ARRAY_SZ=38`, `IOVEC_INDX_FOR_WQ=10`, task@0x130.
+
+Other offsets (architecture-standard, 3.18 ARM32):
+- `task_struct->stack = 0x004` (→ thread_info)
+- `thread_info->addr_limit = 0x008`
+- cred: uid@0x004, securebits@0x024, caps@0x028/0x030/0x038/0x040/0x048
+
+## Exploit technique (ARM32-specific)
+
+Based on **flipphoneguy/root-sonim-xp3800** (reference in `reference/`). Key ARM32 gotchas:
+1. **Spinlock on iov_base**: on 32-bit, wait.lock lands on `iov[10].iov_base` (a pointer).
+   The UAF writes 0x10001 there → iov_iter derefs 0x10001 → panic.
+   **Fix**: NULL guard `iov[WQ] = {NULL, 0}` (iov_iter skips it).
+2. **Timing**: UAF must fire after iov_iter passes iov[WQ] but while on iov[WQ+1].
+   **Fix**: pipe-blocking (fill pipe to capacity-1, then iov[WQ+1] blocks in pipe_wait()).
+3. **Two-phase leak**: task_struct ptr survives in binder_thread's last 4 bytes (0x130).
+   Phase1 leaks it; phase2 uses a secondary clobber to read task_struct->stack.
+4. **Clobber (readv)**: preUafBytes=12 trick + signal pipe + busy_wait + retry (40×).
+
+Chain: leak task_struct → read stack (thread_info) → clobber addr_limit=0xFFFFFFFF →
+arbitrary R/W via pipe → find cred (scan task_struct for uid==myuid) → zero cred + set caps →
+root shell.
+
+## Files
+
+- `exploit/le1_root.c` — the adapted exploit (offsets fixed, taskOff fixed, ready to run)
+- `exploit/leak_debug2.c` — dumps raw leaked kernel data (for offset tuning)
+- `exploit/leak_debug.c`, `leak_test.c`, `dump_leak.c`, `brute_leak.c` — earlier debug tools
+- `reference/su_sonim.c` — full ARM32 reference exploit (Sonim XP3800)
+- `reference/arm32-port.md` — ARM32 technique documentation
+- `reference/CVE-2019-2215.md` — vulnerability + escalation background
+- `reference/binder_mtk318.c` — Android 8.1 binder source (offset source of truth)
+- `reference/binder_318.c` — mainline 3.18 binder (older, no task field)
+- `reference/sched_318.h` — task_struct layout source (stack@0x4)
+- `RESEARCH.md` — full session log + all findings
+- `STATUS.md` — earlier session log
+
+## Next steps
+
+1. Re-run `le1_root.c` on device (verify phase1 leaks 0xc0… task pointer now).
+2. If phase1 OK → phase2 → addr_limit → root shell.
+3. If task still off → run `leak_debug2.c` (set `minimumLeak` to 0x200) to dump real layout.
+4. On root: `mount -o rw,remount /system` → copy `su` → `chmod 6755` → permanent root.
