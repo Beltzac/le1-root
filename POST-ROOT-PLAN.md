@@ -165,3 +165,79 @@ One change per reboot test. Keep `/system` ro except during edits.
 - [ ] Android 8.1 toybox `date` supports `-s`? (fallback: busybox date)
 - [ ] Which MTK logger daemons are actually running & consuming resources? (`top`)
 - [ ] CPU governor currently active? Any thermal throttling in normal car use?
+
+---
+
+## 7. App management (from /system/app, /system/priv-app, /system/preinstall_apks analysis)
+
+Source: extracted `system.img` (k80_bsp Oct-2025 — app set is representative of this platform;
+verify live list with `pm list packages -s` / `-3` / `-d` before acting).
+
+### Inventory (78 system apps + ~45 priv-apps + 1 preinstalled APK)
+
+**Preinstalled vendor APK (in /system/preinstall_apks):**
+- `Auto_V4_5.5.5.600402_C04010001307_WIFI.apk` — vendor car app. Check if user-facing;
+  if unused, remove APK + verify no init service depends on it.
+
+**Vendor/car-specific apps in /system/app (review each):**
+- `HiSight_sig_nodex`, `HiViewLite_sig`, `HwDMSDPDevice_sig`, `HwNearbyCar_sig` — Huawei
+  HiSight/car cast stack. If the unit's mirror-link isn't used → removable.
+- `TXZCore`, `tasvoice` — voice assistant (科大讯飞/TXZ 语音). Disable if voice control unused.
+- `SogoInput` (搜狗输入法) — third-party Chinese IME. Replace with MtkLatinIME or keep.
+- `quickpic_4.5.2` — third-party gallery (old, has known CVEs). Remove if gallery unused.
+- `vehicleinfo-debug`, `wifiap-debug` — DEBUG builds of core vehicle/WiFi-AP apps!
+  (build flavor is user/debug mix). Verify what registers them; likely duplicates.
+- `reglink3rdsdkhost`, `reglink_settings`, `reglinkbluetoothservice`, `reglinkdata`,
+  `reglinkota`, `reglink_services` (priv-app) — the vendor's framework ("reglink" = the
+  kernel builder hostname too). **This is the vendor glue layer — likely boots critical
+  services (BT/OTA/settings). Investigate before touching; reglinkota also handles updates.**
+- `MDMConfig`, `MDMLSample` — MDM (Mobile Device Management) sample + config.
+  `MDMLSample` is a SAMPLE → removable. `MDMConfig` verify.
+- `CallRecorderService` (priv) — recording; personal choice.
+- `FMRadio`, `DuraSpeed`, `HiSight` — DuraSpeed is vendor "keep alive" manager; it may
+  AUTO-KILL Termux background services! If Termux watchdog/SSH dies at runtime,
+  whitelist Termux in DuraSpeed or disable it.
+
+**Safe AOSP/MTK cleanup (standard debloat):**
+- `Chrome` (priv, old version on 8.1 — security risk if unused), `Protips`, `ExactCalculator`,
+  `SoundRecorder`, `MtkGallery2`, `OpenWnn`, `Stk`/`Stk1` (SIM toolkit, no SIM), `Omacp`,
+  `MtkMmsService`, `MtkSimProcessor`, `MtkTeleService`+`MtkTelecom` (unit likely has no
+  cellular modem use — VERIFY, MT6580 here may be WiFi-only variant), `Phonesky` (Play Store
+  if unused), `GooglePartnerSetup`, `GoogleOneTimeInitializer`, `ConfigUpdater`,
+  `CtsShim*`, `HTMLViewer`, `BookmarkProvider`, `CalendarImporter`, `CompanionDeviceManager`,
+  `PrintRecommendationService`, `SmartcardService`, `PacProcessor`, `Uicc1/2Terminal`.
+- KEEP: `MtkLatinIME` (keyboard!), `SystemUI`, `systembar` (vendor system bar!), `MtkSettings`,
+  `WebViewStub`+current WebView, `GoogleServicesFramework`+`GmsCore` if any GMS app used,
+  `MtkNlp` (location), `FileManager` (useful), `GoogleTTS` (if TTS announcements used),
+  `EngineerMode` (useful for diagnostics, hidden).
+
+### Method (reversible, per app)
+```bash
+su
+# freeze (preferred — no /system write, reversible):
+pm disable-user --user 0 <package.name>
+# or fully remove from /system (after backup):
+mount -o rw,remount /system
+mv /system/app/Protips /system/app/Protips.bak   # or tar backup first
+mount -o ro,remount /system
+```
+
+### Watch-outs
+- **DuraSpeed kills background apps** (vendor battery manager) — this likely explains any
+  Termux sshd/agent dying while driving. Whitelist Termux or `pm disable-user com.duraspeed`.
+- **reglink*** = vendor framework — do NOT batch-remove; map dependencies first
+  (dumpsys activity services | grep reglink).
+- **SystemUI vs systembar** — vendor uses BOTH; never remove either without testing.
+- After `/system` app removal, wipe `/data/dalvik-cache` once (or it may keep stale odex).
+- Verify each change with one reboot before the next (same rule as everything else).
+
+### Live-list verification commands (once device online)
+```bash
+pm list packages -s | sort            # all system packages
+pm list packages -3 | sort            # third-party (kingroot remnants etc.)
+pm list packages -d                   # already disabled
+pm path com.kingroot.kinguser         # kingroot remnant → remove (dead root mgr)
+dumpsys package <pkg> | grep -A2 "Activity Resolver"   # find entry activity
+```
+Note: `com.kingroot.kinguser` (package) + `/sdcard/kinguserdown` are leftover from a failed
+prior root attempt — remove after we have working su.
