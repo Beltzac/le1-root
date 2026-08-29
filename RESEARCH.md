@@ -194,3 +194,32 @@ Correct layout (ARM32, from binder_mtk318.c AKB0N 3.18.117, matches Sonim 3.18.7
 - ~/le1-root/exploit/leak_debug2.c (dump leaked kernel data)
 - ~/le1-root/poc/root-sonim-xp3800/su.c (reference, full ARM32 exploit)
 - ~/le1-root/poc/root-sonim-xp3800/docs/arm32-port.md (technique docs)
+
+## SESSION 5 — firmware hunt for exact gwi_dnyb image (result: NOT published)
+
+### Conclusion on finding the exact firmware online
+- Bing/DDG/Google: **zero results** for "gwi_dnyb" — this exact build is NOT published.
+- 4PDA threads (977360, 1080165) are anti-bot blocked (r.jina.ai returns "Just a moment").
+- XDA Alidesheng thread (4033175) mentions firmware exists on 4PDA but no direct links extractable.
+- The k80_bsp firmware I have (Oct 2025) ≠ our build (Aug 2020). Symbol counts differ (38262 vs 41312).
+
+### Prebuilt kernel images found (agent f2)
+- `Mysteryagr/Mystery-Kernel-3.18` release zImage-dtb (3.18.44, Apr 2017) — downloaded to
+  ~/le1-root/kernels/{zImage-dtb, mystery.elf}. **BUT it has the OLD mainline binder**
+  (disassembly of binder_get_thread shows wait at offset **0x2C**, no task field —
+  __init_waitqueue_head called with r0 = thread+44). NOT representative of our device
+  (Android 8.1 backported binder). Symbol count 50315 ≠ our 41312.
+
+### Offset verification status
+- Our binder_thread layout (wait=0x50, task=0x130, size=0x134) rests on:
+  1. binder_error = binder_work(12) + cmd(4) = 16 bytes (from AKB0N 3.18.117 source, verbatim struct).
+  2. Matches Sonim XP3800 (3.18.71) exactly — a real working exploit.
+  3. Empirical: WAITQUEUE_OFFSET=0x40 gave all-zeros leak (no clobber redirect); 0x50 gave
+     non-zero leak (0x00dbd3e1). Consistent with wait=0x50 being correct.
+- Remaining ambiguity: 0x00dbd3e1 is not a clean kernel pointer. Could be misaligned task read
+  (1-byte off due to preUafBytes) — the applied fix reads kern+0xDB. Needs one device run
+  (or leak_debug2 dump) to confirm.
+
+### Model note for agents
+- herdr agents MUST use `--model "openrouter/deepseek/deepseek-v4-flash"` — the plain
+  `deepseek-v4-flash` fails with 402 Insufficient Balance (OpenRouter key is the funded one).
