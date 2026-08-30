@@ -241,3 +241,76 @@ dumpsys package <pkg> | grep -A2 "Activity Resolver"   # find entry activity
 ```
 Note: `com.kingroot.kinguser` (package) + `/sdcard/kinguserdown` are leftover from a failed
 prior root attempt — remove after we have working su.
+
+---
+
+## 8. GPS time sync — the BEST boot-clock source for this unit (offline!)
+
+### Why GPS time is ideal here
+- The unit has a **real MediaTek GPS** (MNLD daemon + GPS chip via WMT combo driver, GPS/EPO/AGPS
+  support confirmed in firmware). GPS satellites carry **atomic-clock UTC** — accuracy ~µs.
+- **Works with zero internet.** Car drives under open sky → fix within 30s-2min of boot
+  (cold start; faster with AGPS/EPO files already downloaded).
+- NTP needs connectivity; GPS doesn't. In a garage NTP wins (WiFi connects, no sky);
+  driving/anywhere else GPS wins. → Use **both, first-wins**.
+
+### Firmware analysis results (how to get NMEA on this platform)
+- GPS daemon: `mnld` (`/vendor/bin/mnld`, runs as user `gps`, init service in
+  `init.connectivity.rc`, **unix socket `/dev/socket/mnld`** created via init).
+- GPS chip interface: **`/dev/gps_emi`** (EMI shared-memory char dev, chmod 666 in
+  `init.connectivity.rc`) — mnld downloads firmware to the combo chip through it.
+- NMEA exits mnld via configurable debug output: strings show `debug_nmea`, `nmea2file`,
+  `nmea2socket` and `pmtk_conn/socket_port/dev_dbg` config. The stock **YGPS app**
+  (`/system/app/YGPS`, MTK factory app) has an **"Enable nmea2socket"** button that
+  streams NMEA to a **localhost TCP socket** (`ClientSocket` → `127.0.0.1`, standard MTK
+  YGPS debug port 7000). It also has `dbg2socket` (binary debug stream).
+- Config knobs (mnld): `mtk_gps_debug` property / debug_nmea flags; NMEA also mirrorable
+  to file (`/data/misc/gps/`, `mtklog/gpsdbglog/`).
+
+### gpstime.sh — GPS-based time setter (root, runs from timefix init service)
+```sh
+#!/system/bin/sh
+# 1) ensure mnld is up (init starts it in class main; double-check)
+start mnld 2>/dev/null
+# 2) ask YGPS-style nmea2socket, or read mnld's nmea file/socket directly.
+# Simplest robust route: enable debug_nmea then read the NMEA the daemon emits.
+# (exact toggle: setprop mtk_gps_debug <mask> — determine bit for nmea2socket on-device,
+#  OR use YGPS app once to enable, flag persists in mnld config)
+# 3) wait for $xxRMC / $xxZDA with valid flag (A = fix)
+# 4) parse: $GPRMC,hhmmss.sss,A,...,ddmmyy
+# 5) set time:
+#    busybox date -s "YYYY-MM-DD HH:MM:SS"   (UTC! then TZ applies)
+#    busybox hwclock -w
+```
+Prototype parse (python or busybox awk):
+```sh
+# $GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
+#         ^time     ^fixA                ^date ddmmyy
+```
+
+### Integration with the timefix chain (priority: first-wins, parallel)
+```
+boot → timefix.sh starts:
+  ├─ thread A: GPS time (mnld + NMEA parse) — no internet needed
+  ├─ thread B: NTP (needs network)
+  └─ thread C: HTTP-Date (needs network, TLS-off via -k)
+→ first source to produce a valid timestamp wins; others cancelled.
+→ always finish with busybox hwclock -w
+```
+GPS has a timeout (e.g. 120s) — if no fix (underground), NTP/HTTP take over.
+Android auto_time (§1a) still worth enabling as a fourth layer.
+
+### On-device verification needed (one session)
+- [ ] Confirm NMEA extraction route: simplest = toggle YGPS "nmea2socket" once and
+      `nc 127.0.0.1 7000` (or netcat equivalent) to see if NMEA streams.
+- [ ] Find mnld's nmea2socket port (`strings /vendor/bin/mnld | grep -E port` near
+      socket_port; YGPS ClientSocket source says 7000 for standard MTK).
+- [ ] Test `setprop` debug_nmea bitmask (property `mtk_gps_debug`) as alternative.
+- [ ] Check EPO.DAT freshness on device (`/data/misc/gps/EPO.DAT`) for fast fixes;
+      optionally refresh EPO weekly (15-day ephemeris, ~50kB, from network — one HTTP GET).
+- [ ] Verify time from NMEA is applied correctly (UTC → local TZ handled by Android).
+
+### Bonus: EPO/AGPS auto-refresh
+Once network is up (any time), refresh `/data/misc/gps/EPO.DAT` from MTK's EPO server →
+subsequent GPS fixes in ~5-15s instead of minutes → boot time sync becomes fast even after
+days parked. Same script, weekly schedule.
