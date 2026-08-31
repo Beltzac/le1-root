@@ -223,3 +223,16 @@ Correct layout (ARM32, from binder_mtk318.c AKB0N 3.18.117, matches Sonim 3.18.7
 ### Model note for agents
 - herdr agents MUST use `--model "openrouter/deepseek/deepseek-v4-flash"` — the plain
   `deepseek-v4-flash` fails with 402 Insufficient Balance (OpenRouter key is the funded one).
+
+## SESSION 6 — CVE-2020-0041 (binder OOB write) added as alternative path
+
+Cloned `bluefrostsecurity/CVE-2020-0041` (official exploit, arm64/Pixel3/4.9 hardcoded)
+into `poc/CVE-2020-0041/`. Full port plan: `poc/CVE-2020-0041/PORT.md`.
+
+- CVE-2020-0041 = binder_transaction OOB write (bad bounds check, A-145988638, fixed 2020-03).
+  Our patch 2018-10-05 -> vulnerable.
+- Advantage vs our CVE-2019-2215: the BUG is not a race (no crash loops). Exploitation
+  still uses sendmmsg heap-grooming (retry-safe, unlike 2215's kmalloc reclaim race).
+- Port: (a) 32-bit binder struct sizes (computed in PORT.md), (b) 3.18 struct-file/
+  task_struct/epitem offsets (dump on-device via our 2215 kernel R/W), (c) drop SELinux
+  steps (already permissive), (d) drop KASLR steps (fixed base 0xC0008000).
