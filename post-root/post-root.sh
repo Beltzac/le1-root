@@ -22,12 +22,15 @@ deploy_file() {
 deploy_time() {
     banner "deploy time-fix scripts -> /system"
     sys_rw
-    deploy_file "$_self_dir/common.sh"  /system/bin/le1-common.sh     644
-    deploy_file "$_self_dir/timefix.sh" /system/bin/timefix.sh        755
-    deploy_file "$_self_dir/gpstime.sh" /system/bin/gpstime.sh        755
-    deploy_file "$_self_dir/timefix.rc" /system/etc/init/timefix.rc   644
+    deploy_file "$_self_dir/common.sh"          /system/bin/le1-common.sh       644
+    deploy_file "$_self_dir/loadtime.sh"        /system/bin/loadtime.sh         755
+    deploy_file "$_self_dir/savetime.sh"        /system/bin/savetime.sh         755
+    deploy_file "$_self_dir/le1-timesaved.sh"   /system/bin/le1-timesaved.sh    755
+    deploy_file "$_self_dir/timefix.sh"         /system/bin/timefix.sh          755
+    deploy_file "$_self_dir/gpstime.sh"         /system/bin/gpstime.sh          755
+    deploy_file "$_self_dir/timefix.rc"         /system/etc/init/timefix.rc     644
     sys_ro
-    ok "time-fix deployed (init auto-runs at boot via sys.boot_completed)"
+    ok "time-fix deployed: loadtime (early restore) + timesave daemon + timefix/gpstime"
 }
 
 test_timefix() {

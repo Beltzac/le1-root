@@ -47,6 +47,8 @@ parse_one() {
     if have busybox && busybox date -u -s "$_ts" >/dev/null 2>&1; then
         ok "clock set from GPS"
         busybox hwclock -w 2>/dev/null && ok "hwclock -w ok"
+        # refresh the last-known-time cache for the next boot
+        [ -x /system/bin/savetime.sh ] && /system/bin/savetime.sh
         return 0
     fi
     warn "date -u -s failed"

@@ -56,6 +56,10 @@ persist_rtc() {
     else
         warn "hwclock -w failed (no RTC backup cell? boot sync is the real fix)"
     fi
+    # update the last-known-time cache so the NEXT boot starts from a good time
+    if [ -x /system/bin/savetime.sh ]; then
+        /system/bin/savetime.sh
+    fi
 }
 
 if wait_network; then

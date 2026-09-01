@@ -1,9 +1,23 @@
-# LE1 boot-time clock sync — init services (reversible: remove this file to undo)
+# LE1 boot-time clock: last-known-time cache + precise sync
 # Deployed to /system/etc/init/timefix.rc by post-root.sh
+# (reversible: remove this file to undo)
 #
 # Android 8.1 init auto-imports /system/etc/init/*.rc.
-# Both run as root, in parallel: network path (NTP/HTTP) + GPS path (offline).
-# First source to set the clock wins; both end with hwclock -w.
+#
+#   1. loadtime    -> restore last-known time EARLY (post-fs-data = /data up)
+#                     so TLS certs validate before any network exists
+#   2. le1timesave -> daemon, keeps the cache fresh (car power-off is abrupt)
+#   3. timefix     -> precise correction via network (NTP / HTTP-Date)
+#   4. gpstime     -> precise correction via GPS (works with no internet)
+
+service loadtime /system/bin/loadtime.sh
+    user root
+    oneshot
+    disabled
+
+service le1timesave /system/bin/le1-timesaved.sh
+    user root
+    disabled
 
 service timefix /system/bin/timefix.sh
     user root
@@ -15,6 +29,10 @@ service gpstime /system/bin/gpstime.sh
     oneshot
     disabled
 
+on post-fs-data
+    start loadtime
+
 on property:sys.boot_completed=1
+    start le1timesave
     start timefix
     start gpstime
