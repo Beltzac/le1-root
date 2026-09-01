@@ -14,12 +14,27 @@ One device run should complete phase1 → root.
 
 ## Quick start (when device is online)
 
+**One-liner (recommended):** `./deploy.sh` — stages the su daemon + exploit, compiles on-device, runs, tails the log.
+
+**Manual:**
 ```bash
 # device: Le1 on Tailscale, SSH u0_a50@100.124.251.81 -p 8022
+
+# 1. stage the ARM32 su daemon (the exploit copies ~/sudaemon -> /system/bin/sudaemon)
+scp -P 8022 poc/root-sonim-xp3800/assets/su u0_a50@100.124.251.81:sudaemon
+
+# 2. stage + compile + run the exploit
 cat exploit/le1_root.c | ssh u0_a50@100.124.251.81 -p 8022 'cat > le1_root.c'
-ssh u0_a50@100.124.251.81 -p 8022 'clang -O2 -o le1_root le1_root.c && ./le1_root'
-# on success: spawns /system/bin/sh as root; then remount /system rw + drop su (permanent)
+ssh u0_a50@100.124.251.81 -p 8022 'clang -O2 -o le1_root le1_root.c && ./le1_root > /data/local/tmp/le1_root.log 2>&1'
+# on success: /system/bin/sudaemon + /system/xbin/su installed; root survives reboots via init service
 ```
+
+**Prerequisite — `~/sudaemon`:** the exploit's post-root step reads `$HOME/sudaemon`
+and installs it as the persistent root daemon (`/system/bin/sudaemon`, started by
+init `user root`) plus the `/system/xbin/su` client. Use the prebuilt ARM32 su from
+`poc/root-sonim-xp3800/assets/su` (bionic-linked libc+libdl, verified 32-bit ARM),
+or compile `reference/su_sonim.c` on-device. It MUST be at `~/sudaemon` on the device
+BEFORE running `le1_root.c` (daemon arg is `--daemon`).
 
 ## Device facts (verified)
 
@@ -91,7 +106,10 @@ root shell.
 
 ## Files
 
-- `exploit/le1_root.c` — the adapted exploit (offsets fixed, taskOff fixed, ready to run)
+- `exploit/le1_root.c` — the adapted exploit (offsets fixed, taskOff fixed, deterministic
+  handshake + logging, ready to run)
+- `deploy.sh` — one-shot staging + compile + run over Tailscale SSH
+- `poc/root-sonim-xp3800/assets/su` — prebuilt ARM32 su daemon (the `~/sudaemon` prerequisite)
 - `exploit/leak_debug2.c` — dumps raw leaked kernel data (for offset tuning)
 - `exploit/leak_debug.c`, `leak_test.c`, `dump_leak.c`, `brute_leak.c` — earlier debug tools
 - `reference/su_sonim.c` — full ARM32 reference exploit (Sonim XP3800)
