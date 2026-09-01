@@ -109,6 +109,8 @@ root shell.
 - `exploit/le1_root.c` — the adapted exploit (offsets fixed, taskOff fixed, deterministic
   handshake + logging, ready to run)
 - `deploy.sh` — one-shot staging + compile + run over Tailscale SSH
+- `backup-emmc.sh` — full/critical eMMC backup pulled to the Pi disk (run as the
+  FIRST root command, before any debloat)
 - `post-root/` — modular, **reversible** post-root scripts (clock fix, GPS time,
   optimize, debloat, restore) with manifest-based undo
 - `poc/root-sonim-xp3800/assets/su` — prebuilt ARM32 su daemon (the `~/sudaemon` prerequisite)
