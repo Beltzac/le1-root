@@ -3,12 +3,14 @@
 Root exploit development for the **LE1 car head unit** (LeTV-branded `gwi_dnyb`, MediaTek
 MT6580M, Android 8.1.0, Linux kernel 3.18.79 armv7l 32-bit).
 
-## Status: exploit ~95% complete (one 1-byte fix verified offline, needs 1 re-run)
+## Status: ready to run — offsets verified, deterministic UAF timing, full logging
 
 The full ARM32 CVE-2019-2215 root chain is implemented in `exploit/le1_root.c`.
-The correct device offsets are derived and applied. The last observed run leaked a task
-pointer **1 byte early** (`0x00dbd3e1`) — the `preUafBytes=1` shift is now subtracted
-(`taskOff = 0xDB`). One re-run should complete phase1 → root.
+Device offsets are derived and verified (`taskOff=0xDB`, `stack@0x004`, `addr_limit@0x008`
+confirmed against the actual kernel source). The 1-byte leak bug is fixed. The UAF
+timing now uses a **deterministic FIONREAD pipe handshake** (no fixed sleeps) so it can't
+fire too early and panic the kernel / trip the MTK watchdog. Every phase is logged.
+One device run should complete phase1 → root.
 
 ## Quick start (when device is online)
 
@@ -74,10 +76,14 @@ Based on **flipphoneguy/root-sonim-xp3800** (reference in `reference/`). Key ARM
    The UAF writes 0x10001 there → iov_iter derefs 0x10001 → panic.
    **Fix**: NULL guard `iov[WQ] = {NULL, 0}` (iov_iter skips it).
 2. **Timing**: UAF must fire after iov_iter passes iov[WQ] but while on iov[WQ+1].
-   **Fix**: pipe-blocking (fill pipe to capacity-1, then iov[WQ+1] blocks in pipe_wait()).
+   **Fix**: deterministic `wait_pipe_bytes()` handshake — poll FIONREAD until the pipe
+   proves the parent is parked at iov[11] (empty for readv/clobber, full for writev/leak),
+   settle 20ms, re-confirm, *then* fire `EPOLL_CTL_DEL`. Timeout → abort safely (no DEL).
 3. **Two-phase leak**: task_struct ptr survives in binder_thread's last 4 bytes (0x130).
    Phase1 leaks it; phase2 uses a secondary clobber to read task_struct->stack.
-4. **Clobber (readv)**: preUafBytes=12 trick + signal pipe + busy_wait + retry (40×).
+4. **Clobber (readv)**: pipe-blocking (deterministic) — the helper fills the pipe, waits
+   for the parent to drain it and park at iov[11], fires the UAF, then delivers a 28-byte
+   crafted iovec + payload + canary. No busy-wait race, no signal pipe.
 
 Chain: leak task_struct → read stack (thread_info) → clobber addr_limit=0xFFFFFFFF →
 arbitrary R/W via pipe → find cred (scan task_struct for uid==myuid) → zero cred + set caps →
@@ -99,7 +105,9 @@ root shell.
 
 ## Next steps
 
-1. Re-run `le1_root.c` on device (verify phase1 leaks 0xc0… task pointer now).
-2. If phase1 OK → phase2 → addr_limit → root shell.
-3. If task still off → run `leak_debug2.c` (set `minimumLeak` to 0x200) to dump real layout.
+1. Re-run `le1_root.c` on device — redirect to a file for panic-durable logs:
+   `./le1_root > /data/local/tmp/le1_root.log 2>&1`
+2. Read the log breadcrumb (`[handshake] PARKED`, `firing UAF`, `UAF fired`, `readv returned`)
+   — the last line before any freeze/reboot pinpoints the failing stage.
+3. If phase1 leaks a non-kernel pointer → run `leak_debug2.c` (set `minimumLeak=0x200`).
 4. On root: `mount -o rw,remount /system` → copy `su` → `chmod 6755` → permanent root.

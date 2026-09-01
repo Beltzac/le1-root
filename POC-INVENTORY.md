@@ -11,20 +11,42 @@ Legend:
 
 ---
 
+## ✅ VERIFIED PATCH STATUS (from exact kernel source, 2026-08)
+
+Checked directly against `~/kernel_3.18.79` (cloned `obraxys/kernel_3.18.79` =
+our board's kernel). **Config-presence ≠ vulnerable** — these verdicts read the
+actual code paths for each CVE's fix signature.
+
+| CVE | Verdict | Evidence (in our source) |
+|-----|---------|--------------------------|
+| **CVE-2019-2215** (binder UAF) | ✅ **UNPATCHED — only live software target** | `binder_poll()` has no NULL check + no `binder_thread_inc_tmpref` around `poll_wait(&thread->wait)` |
+| CVE-2020-0041 (Bad Binder) | ❌ PATCHED | `binder_node->tmp_refs` + `BUG_ON(!node->tmp_refs)` present |
+| CVE-2019-13272 (ptrace) | ❌ PATCHED | `if (!current->ptrace)` in `ptrace_traceme()` |
+| CVE-2016-8655 (AF_PACKET race) | ❌ PATCHED | `lock_sock(sk)` inside `packet_set_ring()` |
+| CVE-2017-7308 (AF_PACKET overflow) | ❌ PATCHED | `req->tp_block_size > UINT_MAX / req->tp_block_nr` check |
+| CVE-2017-1000112 (UDP UFO) | ❌ PATCHED | `skb_queue_len(&sk->sk_write_queue) <= 1` in `ip6_output.c` |
+| CVE-2016-9793 (SO_SNDBUFFORCE) | ⚠️ unpatched, but needs `CAP_NET_ADMIN` | no `val < 0` check — useless without root |
+
+**Conclusion:** porting AF_PACKET / ptrace / Bad Binder / UDP exploits is **wasted
+effort** — they're already fixed in this 2020 MediaTek build. The only viable
+software exploit is **CVE-2019-2215** (already ported in `~/le1-root/exploit/le1_root.c`).
+
+---
+
 ## Local Privilege Escalation (root candidates — primary)
 
 | # | CVE | Path | Subsystem | Config | Arch | Status | Notes |
 |---|-----|------|-----------|--------|------|--------|-------|
-| 1 | **CVE-2019-2215** | `cve-2019-2215-3.18/` `cve2019-2215-3.18/` `CVE-2019-2215/` `cve-2019-2215_SH-M08/` | binder UAF | ✅ `BINDER_IPC=y` | 🔧 32-bit port **in progress** (`~/le1-root/exploit/le1_root.c`) | ⭐ **~95% done, last blocker 1-byte leak fix** | See SKILL.md + RESEARCH.md. Working ARM32 technique from `root-sonim-xp3800/` |
-| 2 | **CVE-2020-0041** | `CVE-2020-0041/` | binder (Bad Binder) | ✅ `BINDER_IPC=y` | 🔧 port needed (bluefrost x86/ARM64) | untested | `PORT.md` in repo; Android Security Bulletin Mar-2020 |
-| 3 | **CVE-2016-8655** | `CVE-2016-8655/` + `kernel-exploits-bcoles/CVE-2016-8655/` | AF_PACKET (packet_sock chokepoint) | ✅ `PACKET=y` | 🔧 x86 PoC, port to ARM32 | untested | Android variant exists (`martinmullins/CVE-2016-8655_Android`) |
-| 4 | **CVE-2017-7308** | `CVE-2017-7308/` + `kernel-exploits-xairy/CVE-2017-7308/` | AF_PACKET (packet_set_ring heap overflow) | ✅ `PACKET=y` | 🔧 port to ARM32 | untested | xairy PoC is x86-64 |
-| 5 | **CVE-2016-9793** | `CVE-2016-9793/` + `kernel-exploits-xairy/CVE-2016-9793/` | AF_PACKET / SO_SNDBUFFORCE (net/ipv4) | ✅ `PACKET=y` | 🔧 port | untested | |
-| 6 | **CVE-2017-1000112** | `CVE-2017-1000112/` `CVE-2017-1000112-Spydomain/` `kernel-exploits-xairy/CVE-2017-1000112/` | UDP fragmentation (ip_ufo_append_data) | ✅ `INET=y` | 🔧 port | untested | Also `CVE-2017-1000112-Adpated` variant |
+| 1 | **CVE-2019-2215** | `cve-2019-2215-3.18/` `cve2019-2215-3.18/` `CVE-2019-2215/` `cve-2019-2215_SH-M08/` | binder UAF | ✅ `BINDER_IPC=y` | ✅ 32-bit ported (`~/le1-root/exploit/le1_root.c`) | ⭐ **VERIFIED UNPATCHED — re-run on device** | See SKILL.md + RESEARCH.md. Working ARM32 technique from `root-sonim-xp3800/` |
+| 2 | **CVE-2020-0041** | `CVE-2020-0041/` | binder (Bad Binder) | ✅ `BINDER_IPC=y` | — | ❌ **PATCHED** (node tmp_refs present) | Do NOT port |
+| 3 | **CVE-2016-8655** | `CVE-2016-8655/` + `kernel-exploits-bcoles/CVE-2016-8655/` | AF_PACKET (packet_sock chokepoint) | ✅ `PACKET=y` | — | ❌ **PATCHED** (lock_sock in packet_set_ring) | Do NOT port |
+| 4 | **CVE-2017-7308** | `CVE-2017-7308/` + `kernel-exploits-xairy/CVE-2017-7308/` | AF_PACKET (packet_set_ring heap overflow) | ✅ `PACKET=y` | — | ❌ **PATCHED** (UINT_MAX overflow check) | Do NOT port |
+| 5 | **CVE-2016-9793** | `CVE-2016-9793/` + `kernel-exploits-xairy/CVE-2016-9793/` | AF_PACKET / SO_SNDBUFFORCE (net/ipv4) | ✅ `PACKET=y` | — | ⚠️ unpatched but needs `CAP_NET_ADMIN` | useless without root already |
+| 6 | **CVE-2017-1000112** | `CVE-2017-1000112/` `CVE-2017-1000112-Spydomain/` `kernel-exploits-xairy/CVE-2017-1000112/` | UDP fragmentation (ip_ufo_append_data) | ✅ `INET=y` | — | ❌ **PATCHED** (skb_queue_len<=1 check) | Do NOT port |
 | 7 | **CVE-2016-0728** | `CVE-2016-0728/` `CVE-2016-0728-testbed/` | keyrings refcount overflow | ❌ `CONFIG_KEYS` **not set** | 🔧 | **NOT applicable** | Saved for completeness; keyrings not compiled |
 | 8 | CVE-2017-1000111 | *(no standalone repo — see below)* | AF_PACKET (packet_set_ring) | ✅ `PACKET=y` | 🔧 | not found | No public standalone PoC; adapt from CVE-2016-8655 PoC (same surface) |
 | 9 | CVE-2018-18955 | `kernel-exploits-bcoles/CVE-2018-18955/` | userns map_write | ❌ `USER_NS` **not set** | — | **NOT applicable** | |
-| 10 | CVE-2019-13272 | `kernel-exploits-bcoles/CVE-2019-13272/` | ptrace PTRACE_TRACEME | ✅ core (ptrace) | 🔧 | untested | Worth a try; affects 3.18 |
+| 10 | CVE-2019-13272 | `kernel-exploits-bcoles/CVE-2019-13272/` | ptrace PTRACE_TRACEME | ✅ core (ptrace) | — | ❌ **PATCHED** (if(!current->ptrace)) | Do NOT port |
 | 11 | CVE-2017-6074 | `kernel-exploits-xairy/CVE-2017-6074/` | DCCP double-free | ❌ no DCCP protocol | — | **NOT applicable** | only conntrack helper compiled |
 | 12 | CVE-2018-5333 | `kernel-exploits-bcoles/CVE-2018-5333/` | RDS | ❌ `RDS` **not set** | — | **NOT applicable** | |
 
@@ -55,12 +77,18 @@ Legend:
 
 ## What's actually worth trying next (ranked)
 
-1. **Finish CVE-2019-2215** (`~/le1-root/exploit/le1_root.c`) — 1-byte leak fix already applied, just re-run on device (~30s, device online).
-2. **CVE-2019-13272** (ptrace) — pure core-kernel, no module deps, plausible on 3.18. Quick port.
-3. **CVE-2016-8655 / CVE-2017-7308** (AF_PACKET) — `PACKET=y` confirmed, need ARM32 port (xairy PoC is x86).
-4. **CVE-2017-1000112** (UDP frag) — `INET=y`, port needed.
-5. BlueBorne / USB-audio — remote/physical, last resort.
+1. **Finish CVE-2019-2215** (`~/le1-root/exploit/le1_root.c`) — the ONLY live software
+exploit. 1-byte leak fix verified correct (taskOff=0xDB, offsets stack@0x004 /
+addr_limit@0x008 confirmed against source). Just re-run on device (~30s, device online).
+2. **Custom permissive kernel** (`~/kernel_3.18.79/LE1_ROOT_KERNEL.md`) — the deterministic
+hardware path; needs stock boot.img + SP Flash Tool / mtkclient. Independent of any CVE.
+3. BlueBorne / USB-audio — remote/physical, last resort (and still need an LPE to chain).
 
-### Not applicable (config-verified, don't waste time)
+### Patched (source-verified — do NOT port, do NOT re-investigate)
+CVE-2020-0041, CVE-2016-8655, CVE-2017-7308, CVE-2017-1000112, CVE-2019-13272,
+CVE-2017-1000111 (same packet_set_ring surface as 8655).
+
+### Not applicable (config-verified)
 CVE-2016-0728 (no KEYS), CVE-2017-6074 (no DCCP), CVE-2018-5333 (no RDS),
-CVE-2018-18955 (no USER_NS), CVE-2016-2384 (no usb-midi), mtk-su/CVE-2020-0069 (ARM64-only).
+CVE-2018-18955 (no USER_NS), CVE-2016-2384 (no usb-midi), mtk-su/CVE-2020-0069 (ARM64-only),
+CVE-2016-9793 (needs CAP_NET_ADMIN — moot without root).
