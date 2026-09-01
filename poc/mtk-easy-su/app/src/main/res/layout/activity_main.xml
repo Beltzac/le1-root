@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/mAppBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/mToolBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:layout_scrollFlags="scroll|enterAlways"
+            app:title="@string/app_name"
+            app:titleTextColor="?colorOnPrimary" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <LinearLayout
+            android:id="@+id/mRootView"
+            style="@style/LinearLayoutContainer">
+
+            <android.widget.Space
+                android:layout_width="0dp"
+                android:layout_height="24dp" />
+
+            <com.google.android.material.card.MaterialCardView style="@style/CustomCardView">
+
+                <LinearLayout style="@style/CustomCardViewContainer">
+
+                    <TextView
+                        style="@style/CustomCardViewTitle"
+                        android:text="@string/credits" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.imageview.ShapeableImageView
+                            style="@style/CustomCardViewDeveloperImage"
+                            android:background="@color/primaryColor"
+                            android:contentDescription="@string/todo"
+                            android:tint="@android:color/background_light"
+                            app:srcCompat="@mipmap/johnwu_img" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:lineSpacingExtra="4sp"
+                            android:text="@string/john_wu_about" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.imageview.ShapeableImageView
+                            style="@style/CustomCardViewDeveloperImage"
+                            android:background="@color/primaryColor"
+                            android:contentDescription="@string/todo"
+                            android:tint="@android:color/white"
+                            app:srcCompat="@drawable/ic_person_black_24dp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:lineSpacingExtra="4dp"
+                            android:text="@string/mtk_su" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.imageview.ShapeableImageView
+                            style="@style/CustomCardViewDeveloperImage"
+                            android:background="@color/primaryColor"
+                            android:contentDescription="@string/todo"
+                            android:tint="@android:color/white"
+                            app:srcCompat="@drawable/ic_person_black_24dp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:lineSpacingExtra="4sp"
+                            android:text="@string/juniojsv_about" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/mButtonDonate"
+                        style="@style/CustomButtonOutlined"
+                        android:layout_width="match_parent"
+                        android:text="@string/donate"
+                        app:icon="@drawable/ic_local_cafe_black_24dp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView style="@style/CustomCardView">
+
+                <LinearLayout style="@style/CustomCardViewContainer">
+
+                    <TextView
+                        style="@style/CustomCardViewTitle"
+                        android:text="@string/preferences" />
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/mRunAs64"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/run_as_64_bits" />
+
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView style="@style/CustomCardView">
+
+                <LinearLayout style="@style/CustomCardViewContainer">
+
+                    <TextView
+                        style="@style/CustomCardViewTitle"
+                        android:text="@string/log" />
+
+                    <TextView
+                        android:id="@+id/mLog"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:maxHeight="250dp"
+                        android:scrollbars="vertical"
+                        android:text="@string/log_null" />
+
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/mButtonCopy"
+                        style="@style/CustomButtonOutlined"
+                        android:layout_width="match_parent"
+                        android:enabled="false"
+                        android:text="@string/copy"
+                        app:icon="@drawable/ic_content_copy_black_24dp" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView style="@style/CustomCardView">
+
+                <LinearLayout style="@style/CustomCardViewContainer">
+
+                    <TextView
+                        style="@style/CustomCardViewTitle"
+                        android:text="@string/about_word" />
+
+                    <TextView
+                        style="@style/CustomCardViewTitleSmall"
+                        android:text="@string/app_name" />
+
+                    <TextView
+                        android:id="@+id/mVersion"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+
+                    <TextView
+                        style="@style/CustomCardViewText"
+                        android:text="@string/about" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/mButtonGithub"
+                        style="@style/CustomButtonOutlined"
+                        android:layout_width="match_parent"
+                        android:text="@string/github"
+                        app:icon="@drawable/ic_home_black_24dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/mButtonXda"
+                        style="@style/CustomButtonOutlined"
+                        android:layout_width="match_parent"
+                        android:text="@string/xda"
+                        app:icon="@drawable/ic_forum_black_24dp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView style="@style/CustomCardView">
+
+                <LinearLayout style="@style/CustomCardViewContainer">
+
+                    <TextView
+                        style="@style/CustomCardViewTitle"
+                        android:text="@string/warning_word" />
+
+                    <TextView
+                        style="@style/CustomCardViewText"
+                        android:text="@string/warning" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <android.widget.Space
+                android:layout_width="0dp"
+                android:layout_height="80dp" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/mButtonTryRoot"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|bottom"
+        android:layout_margin="24dp"
+        android:elevation="8dp"
+        android:src="@drawable/ic_launcher_foreground"
+        app:maxImageSize="48dp"
+        app:tint="@android:color/white"
+        tools:ignore="ContentDescription" />
+
+    <com.google.android.gms.ads.AdView
+        android:id="@+id/mBannerAd"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:adSize="BANNER"
+        app:adUnitId="@string/banner_advertising_id"
+        app:layout_anchor="@id/mAppBar"
+        android:layout_gravity="bottom"
+        app:layout_anchorGravity="bottom" />
+
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

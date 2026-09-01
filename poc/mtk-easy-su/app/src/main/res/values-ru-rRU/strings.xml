@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about">
+        Это приложение поможет вам использовать mtk-su для загрузки Magisk на совместимых устройствах,
+        включая те, у которых заблокирован загрузчик! Оно работает полностью в разделе данных,
+        поэтому вам не нужно изменять прошивку. Root-доступ доступен для любого приложения,
+        но для управления им необходимо скачать Magisk Manager.
+    </string>
+    <string name="startup_warning">
+        Неправильное использование прав суперпользователя может серьезно повредить ваше устройство.
+        Имейте в виду, что вы несете полную ответственность за его использование.
+    </string>
+    <string name="warning">
+        Не обновляйте Magisk через Magisk Manager на устройстве с заблокированным загрузчиком,
+        иначе вы можете его заблокировать.
+        Кроме того, я не несу ответственности за любой возможный ущерб вашему устройству.
+    </string>
+    <string name="success">
+        Права суперпользователя предоставлены. Используйте Magisk Manager для управления.</string>
+    <string name="john_wu_about">John Wu\nСоздатель Magisk</string>
+    <string name="juniojsv_about">JunioJsv\nРазработчик этого приложения</string>
+    <string name="mtk_su">Diplomatic\nСоздатель mtk-su</string>
+    <string name="app_name">Mtk Easy Su</string>
+    <string name="executing_script">Выполняется скрипт…</string>
+    <string name="please_wait">Пожалуйста, подождите…</string>
+    <string name="version">Версия</string>
+    <string name="accept">Принять</string>
+    <string name="about_word">О приложении</string>
+    <string name="credits">Благодарности</string>
+    <string name="preferences">Настройки</string>
+    <string name="warning_word">Предупреждение</string>
+    <string name="copy">Копировать</string>
+    <string name="donate">Поддержать</string>
+    <string name="run_as_64_bits">Запустить в 64-битном режиме</string>
+    <string name="xda">Форум XDA</string>
+    <string name="fail">Ошибка. Попробуйте еще раз.</string>
+    <string name="log">Журнал</string>
+    <string name="new_version_available">Доступна новая версия</string>
+    <string name="download">Скачать</string>
+    <string name="close">Закрыть</string>
+    <string name="security_patch_warning">
+        Дата обновления системы безопасности — после марта 2020 года.
+        Повторите попытку после отката прошивки.
+    </string>
+    <string name="ignore">Игнорировать</string>
+    <string name="terminal">Терминал</string>
+    <string name="auto_send_logs">Разрешить отправку журналов выполнения</string>
+</resources>
