@@ -1,0 +1,20 @@
+# LE1 boot-time clock sync — init services (reversible: remove this file to undo)
+# Deployed to /system/etc/init/timefix.rc by post-root.sh
+#
+# Android 8.1 init auto-imports /system/etc/init/*.rc.
+# Both run as root, in parallel: network path (NTP/HTTP) + GPS path (offline).
+# First source to set the clock wins; both end with hwclock -w.
+
+service timefix /system/bin/timefix.sh
+    user root
+    oneshot
+    disabled
+
+service gpstime /system/bin/gpstime.sh
+    user root
+    oneshot
+    disabled
+
+on property:sys.boot_completed=1
+    start timefix
+    start gpstime

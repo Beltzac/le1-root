@@ -109,6 +109,8 @@ root shell.
 - `exploit/le1_root.c` — the adapted exploit (offsets fixed, taskOff fixed, deterministic
   handshake + logging, ready to run)
 - `deploy.sh` — one-shot staging + compile + run over Tailscale SSH
+- `post-root/` — modular, **reversible** post-root scripts (clock fix, GPS time,
+  optimize, debloat, restore) with manifest-based undo
 - `poc/root-sonim-xp3800/assets/su` — prebuilt ARM32 su daemon (the `~/sudaemon` prerequisite)
 - `exploit/leak_debug2.c` — dumps raw leaked kernel data (for offset tuning)
 - `exploit/leak_debug.c`, `leak_test.c`, `dump_leak.c`, `brute_leak.c` — earlier debug tools
