@@ -16,7 +16,12 @@ banner "gpstime: GPS clock sync"
 
 TIMEOUT="${1:-120}"
 NMEA_HOST=127.0.0.1
-NMEA_PORT=7000        # TODO: confirm on-device
+NMEA_PORT=7000        # CONFIRMED: mnld.c `.socket_port = 7000` (lbule/android_hardware_mediatek
+                    # mirror, mnld/src/mnld.c:501-502, `.pmtk_conn = PMTK_CONNECTION_SOCKET`,
+                    # `.nmea2socket = 1` default ON at :512). No on-device port hunt needed.
+# To force the stream if silent: am start -n com.mediatek.ygps/.YgpsActivity (YGPS app)
+# then toggle NMEA LOG / nmea2socket; alt: com.mediatek.engineermode EngineerMode
+# (probonopd/mtk-gps-debugging). Verify once: `nc 127.0.0.1 7000`.
 NMEA_FILE="/data/local/tmp/le1-nmea.$$"
 
 # parse_one <NMEA line> — set clock if it's a valid-fix GPRMC/ZDA. returns 0 on success.
@@ -29,7 +34,10 @@ parse_one() {
             _date="$(echo "$_line" | cut -d',' -f10)"
             [ "$_fix" = "A" ] || return 1
             [ ${#_time} -ge 6 ] && [ ${#_date} -ge 6 ] || return 1
-            _ts="20$(echo "$_date" | cut -c5-6)-$(echo "$_date" | cut -c3-4)-$(echo "$_date" | cut -c1-2) $(echo "$_time" | cut -c1-2):$(echo "$_time" | cut -c3-4):$(echo "$_time" | cut -c5-6)"
+            # 2-digit year windowing (GPS week rollover safe): 80-99 -> 19yy, else 20yy
+            _yy="$(echo "$_date" | cut -c5-6)"
+            if [ "$_yy" -ge 80 ] 2>/dev/null; then _yyyy="19$_yy"; else _yyyy="20$_yy"; fi
+            _ts="$_yyyy-$(echo "$_date" | cut -c3-4)-$(echo "$_date" | cut -c1-2) $(echo "$_time" | cut -c1-2):$(echo "$_time" | cut -c3-4):$(echo "$_time" | cut -c5-6)"
             ;;
         '$GPZDA,'*|'$GNZDA,'*)
             # $GPZDA,hhmmss.ss,dd,mm,yyyy,...

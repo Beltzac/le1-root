@@ -37,7 +37,12 @@ undo_one() {
                 info "already gone: $_a1"
             fi ;;
         setprop)
-            setprop "$_a1" "$_a2" && ok "setprop $a1 -> $a2 (restored)" ;;
+            if [ "$_a2" = "<unset>" ] || [ -z "$_a2" ]; then
+                # value was unset before: delete the prop (Android: empty setprop deletes)
+                setprop "$_a1" "" && ok "setprop $_a1 cleared (was unset)"
+            else
+                setprop "$_a1" "$_a2" && ok "setprop $_a1 -> $_a2 (restored)"
+            fi ;;
         governor)
             echo "$_a1" > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null \
                 && ok "governor -> $_a1 (restored)" ;;

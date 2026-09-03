@@ -73,6 +73,11 @@ software exploit is **CVE-2019-2215** (already ported in `~/le1-root/exploit/le1
 | `android-kernel-exploitation/` | cloudfuzz/AndroidKernelVulnerability + android-kernel-exploitation (4.14-dev emulator lab, ARM64/x86 reference) |
 | `root-sonim-xp3800/` | flipphoneguy root for Sonim XP3800 — **the working ARM32 binder technique** used as template for le1_root.c |
 
+> NOTE: the original arpruss/cve2019-2215-3.18 repo is **deleted** (GitHub 404, confirmed
+> 2026-09-03). Surviving mirrors: Karma2424/cve2019-2215-3.18 (GitHub fork, ARM64-only —
+> NOT for our ARM32 unit) and https://repo.or.cz/cve2019-2215-3.18.git (community mirror).
+> Our Sonim-based ARM32 port (`exploit/le1_root.c`) stays the base; do NOT chase su98.
+
 ---
 
 ## What's actually worth trying next (ranked)

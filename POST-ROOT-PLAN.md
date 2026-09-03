@@ -149,8 +149,14 @@ One change per reboot test. Keep `/system` ro except during edits.
 
 ## 5. Safety net
 
+- Order matters: backup FIRST, /system writes NEVER before backup.
+  Pre-root backup = mtkclient/SPFT readback from a PC (this repo's backup-emmc.sh
+  needs su, i.e. post-root). Post-root, run `./backup-emmc.sh critical` as the
+  very first root command — before su install / debloat / timefix deploy.
 - Full SP-Flash-Tool firmware dump + scatter file already on hand (`~/rootkit/`,
   `Firmware for SPFT/`) — bad `/system` edits are recoverable via hardware flash path.
+  NOTE: on-hand dumps are the Oct-2025 build; our device is Aug-2020 — symbol
+  addresses differ, do NOT mix-match boot.imgs across builds.
 - Pre-root: `tar` backup of any `/system` file before modifying it.
 - `/vendor/protect_f`, `/vendor/protect_s`, `/vendor/nvdata` are rw but nosuid/nodev —
   not usable for persistence; `/system` + `/data` are the only persistence targets.
@@ -264,6 +270,13 @@ prior root attempt — remove after we have working su.
   (`/system/app/YGPS`, MTK factory app) has an **"Enable nmea2socket"** button that
   streams NMEA to a **localhost TCP socket** (`ClientSocket` → `127.0.0.1`, standard MTK
   YGPS debug port 7000). It also has `dbg2socket` (binary debug stream).
+- ONLINE-VERIFIED (2026-09-03, mnld.c source): `socket_port = 7000`,
+  `pmtk_conn = PMTK_CONNECTION_SOCKET`, `nmea2socket = 1` **default ON**
+  (lbule/android_hardware_mediatek mirror, `gps/mnl/mnl_aosp/mnld/src/mnld.c:501-512`).
+  Port 7000 is confirmed — no on-device port hunt needed, only verify the stream is live.
+- Start activities without tapping UI (probonopd/mtk-gps-debugging):
+  `am start -n com.mediatek.ygps/.YgpsActivity`,
+  `am start -n com.mediatek.engineermode/com.mediatek.engineermode.EngineerMode`.
 - Config knobs (mnld): `mtk_gps_debug` property / debug_nmea flags; NMEA also mirrorable
   to file (`/data/misc/gps/`, `mtklog/gpsdbglog/`).
 

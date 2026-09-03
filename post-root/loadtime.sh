@@ -38,7 +38,10 @@ info "restoring cached time: epoch $_epoch (clock was: ${_now:-unknown} = $(date
 if have busybox; then
     _ts="$(busybox date -d "@$_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
 else
-    _ts="$(date -d "@$_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
+    # toybox date on Android 8.1 lacks -d @epoch (GNU ext) — busybox is REQUIRED here.
+    # loadtime runs from /system post-root, so busybox must be deployed first (post-root.sh deploy).
+    warn "no busybox (need date -d) — cannot restore cached time; skipping"
+    exit 1
 fi
 [ -n "$_ts" ] || { warn "could not format epoch $_epoch — skipping restore"; exit 1; }
 

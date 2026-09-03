@@ -54,9 +54,23 @@ From vmlinux-to-elf (kernel.elf):
    a. Find Le1 OS_v2.0.5 (Aug 2020) firmware online → extract symbols → build 32-bit PoC.
    b. Use Oct-2025 symbols as gamble (low probability, kernel panic→reboot = recoverable).
    c. Symbol-free exploit (addr_limit overwrite via list_del write-what-where, then dynamic symbol scan) — more engineering.
+   NOTE (online-verified 2026-09-03): the famous XDA `su98` binary / arpruss/cve2019-2215-3.18
+   is GONE (repo deleted; Karma2424 fork survives) and is **ARM64-only** (KERNEL_BASE
+   0xffffffc0, WAITQUEUE 0x98, stack@0x008) — useless on our ARM32 MT6580 (base 0xC0000000,
+   WAITQUEUE 0x50, stack@0x004). Our Sonim-based ARM32 port (`exploit/le1_root.c`) stays
+   the correct base; do NOT chase su98.
 2. **SP Flash Tool flash of Magisk boot.img (PROVEN, hardware)** — needs USB debug-port mod
    (remove 2x 2.75Ω resistors on DEBUG header, solder VBUS/D+/D-/GND) + Windows/Linux PC.
    Everything downloaded. mtkclient alt: `python3 mtk da seccfg unlock; mtk r boot; mtk d boot magisk_patched.img`.
+   BROM entry (Hovatek, verified 2026-09-03): try Vol-down / both-vol / both-vol+power
+   while plugging USB first; if preloader grabs the port and drops it, use the
+   crash-preloader-to-BROM trick (SPFT Download with scatter loaded → expected error
+   leaves the device stuck as Mediatek USB Port) or `mtkclient`'s crash feature.
+   Head unit with no buttons → test point is the fallback, crash trick first.
+   XDA cross-check (thread 4791038, ExtremeMOD Jun 2026, single post = unconfirmed by 2nd unit):
+   exact eMCP Samsung KMFE60012M-B214; SoC printed MT6580A (our MT6580M family);
+   unit advertised as Android 12, real 8.1; multimeter-check D+/D− before touching
+   resistors; vendor FW is lightweight (fast for 1GB — freeze less, not more).
 3. **update.zip via test-keys recovery (untested)** — ro.build.tags=test-keys → recovery may accept
    test-key-signed update.zip that writes su to /system/xbin. Some brick risk. Needs verification
    that MTK stock recovery auto-applies /sdcard/update.zip.

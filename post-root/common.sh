@@ -41,15 +41,37 @@ record() {
 # ---- guards / mounts --------------------------------------------------------
 require_root() {
     _uid="$(id -u 2>/dev/null)"
+    # init-service context may lack `id`: fall back to whoami check
+    if [ -z "$_uid" ]; then
+        _uid="$(whoami 2>/dev/null)"
+        [ "$_uid" = "root" ] && _uid=0
+    fi
     [ "$_uid" = "0" ] || die "not root (uid=$_uid) — run: su -c 'sh $0'"
 }
-sys_rw() { mount -o rw,remount /system || die "remount /system rw failed"; }
-sys_ro() { mount -o ro,remount /system || warn "remount /system ro failed"; }
+# remount helpers: try modern syntax first, fall back to legacy (Android 8 toybox varies)
+sys_rw() {
+    mount -o rw,remount /system /system 2>/dev/null \
+        || mount -o rw,remount /system 2>/dev/null \
+        || die "remount /system rw failed"
+}
+sys_ro() {
+    mount -o ro,remount /system /system 2>/dev/null \
+        || mount -o ro,remount /system 2>/dev/null \
+        || warn "remount /system ro failed"
+}
 
 # ---- reversible file ops ----------------------------------------------------
 backup() {
     [ -e "$1" ] || return 0
-    cp -a "$1" "$1.prele1.$(date +%s)" && info "backed up: $1"
+    # backups go to /data (big) — /system is ~90% full, never write .bak next to originals there
+    _bdir="${BACKUP_DIR:-/data/misc/le1-time/backups}"
+    mkdir -p "$_bdir" 2>/dev/null
+    _bname="$(echo "$1" | tr '/' '_').prele1.$(date +%s)"
+    if cp -a "$1" "$_bdir/$_bname" 2>/dev/null; then
+        info "backed up: $1 -> $_bdir/$_bname"
+    else
+        warn "backup failed: $1"
+    fi
     return 0
 }
 

@@ -17,6 +17,11 @@
 # Requirements (all already true):
 #   - LE1 reachable via Tailscale SSH (u0_a50@100.124.251.81:8022)
 #   - LE1 already rooted (su daemon installed) — pull runs `su -c 'dd ...'`
+#
+# PRE-ROOT? This script cannot run pre-root (needs su to read block devs).
+#   Pre-root backup = mtkclient/SPFT readback from a PC instead:
+#     python3 mtk r boot boot.img   # + system/vendor/lk/preloader via readback
+#   Post-root, run this script FIRST — before any /system write (debloat, su install).
 # =============================================================================
 set -euo pipefail
 

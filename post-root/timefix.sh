@@ -7,6 +7,18 @@ TAG=LE1-timefix
 
 banner "timefix: network clock sync"
 
+# init-service PATH is minimal (/sbin:/system/bin:/system/xbin) — resolve busybox/curl absolutely.
+# busybox lives at /system/xbin/busybox on most MTK 8.1 builds, /system/bin/busybox on others.
+BB=""
+for _b in /system/xbin/busybox /system/bin/busybox busybox; do
+    if command -v "$_b" >/dev/null 2>&1 || [ -x "$_b" ]; then BB="$_b"; break; fi
+done
+[ -n "$BB" ] && info "busybox: $BB" || warn "no busybox found — NTP/hwclock/date -d unavailable"
+CURL=""
+for _c in /system/bin/curl /system/xbin/curl curl; do
+    if command -v "$_c" >/dev/null 2>&1 || [ -x "$_c" ]; then CURL="$_c"; break; fi
+done
+
 NET_TIMEOUT=180   # seconds to wait for connectivity
 
 wait_network() {
@@ -22,9 +34,9 @@ wait_network() {
 }
 
 ntp_sync() {
-    have busybox || { warn "no busybox — skipping NTP"; return 1; }
-    info "NTP via busybox ntpd -q -p pool.ntp.org ..."
-    _out="$(busybox ntpd -q -p pool.ntp.org 2>&1)"
+    [ -n "$BB" ] || { warn "no busybox — skipping NTP"; return 1; }
+    info "NTP via $BB ntpd -q -p pool.ntp.org ..."
+    _out="$($BB ntpd -q -p pool.ntp.org 2>&1)"
     _rc=$?
     [ -n "$_out" ] && echo "$_out" | tail -2
     if [ "$_rc" = 0 ]; then ok "NTP synced"; return 0; fi
@@ -33,12 +45,12 @@ ntp_sync() {
 }
 
 http_sync() {
-    have curl || { warn "no curl — skipping HTTP-Date"; return 1; }
-    info "HTTP-Date fallback (curl -kI https://www.google.com) ..."
-    _d="$(curl -k -sI https://www.google.com 2>/dev/null | grep -i '^date:' | head -1 | cut -d' ' -f2-)"
+    [ -n "$CURL" ] || { warn "no curl — skipping HTTP-Date"; return 1; }
+    info "HTTP-Date fallback ($CURL -kI https://www.google.com) ..."
+    _d="$($CURL -k -sI https://www.google.com 2>/dev/null | grep -i '^date:' | head -1 | cut -d' ' -f2-)"
     [ -n "$_d" ] || { warn "no Date header returned"; return 1; }
     info "server date: $_d"
-    if have busybox && busybox date -s "$_d" >/dev/null 2>&1; then
+    if [ -n "$BB" ] && $BB date -s "$_d" >/dev/null 2>&1; then
         ok "time set from HTTP-Date"
         return 0
     fi
@@ -51,7 +63,7 @@ http_sync() {
 }
 
 persist_rtc() {
-    if have busybox && busybox hwclock -w 2>/dev/null; then
+    if [ -n "$BB" ] && $BB hwclock -w 2>/dev/null; then
         ok "hwclock -w ok"
     else
         warn "hwclock -w failed (no RTC backup cell? boot sync is the real fix)"
