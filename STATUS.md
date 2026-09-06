@@ -1,5 +1,27 @@
 # LE1 Root Attempt — Session Log & Findings
 
+## ✅ ROOT ACHIEVED & PERSISTENT (2026-09-06)
+
+CVE-2019-2215 (binder UAF) exploit **succeeded**. Full chain completed:
+- phase1 leaked task_struct `0xc4700680`; phase2 leaked stack `0xd277a000`,
+  clobbered addr_limit; cred recovered via `find_cred` (offset 0x39C is wrong
+  on this 3.18.79 build — fallback scan found it, `0xdb12ab00`).
+- `getuid()=0` confirmed. Remounted /system rw (auto-detected device).
+- Installed: `/system/bin/sudaemon` (daemon, root), `/system/xbin/su` (client),
+  `/system/etc/init/sudaemon.rc` (auto-start at boot).
+- `su daemon RUNNING` (PID ~10819, socket `/data/local/tmp/.su.sock`).
+- `/system/xbin/su -c 'id'` → `uid=0(root) gid=0(root)`. **Survives reboots.**
+
+### The two fixes that made it work (vs. the prior "~95%" state)
+1. **Clobber regression**: the earlier "deterministic pipe-blocking handshake"
+   rewrite of `clobber_data` (preUafBytes=1, 28-byte chunk, wait_pipe_bytes) NEVER
+   landed the arbitrary write. Reverted to the proven ARM32 reference (su.c):
+   3-process model (helper/child/parent) + signal-pipe + `busy_wait_ns` +
+   `preUafBytes=12` + `clobberSize=16` + 40 retries (50µs→830µs).
+2. **cred offset 0x39C wrong**: `leak_phase2` was requiring `cred` to be a valid
+   kernel pointer and bailing. Relaxed it to only require `stack`; `main()` already
+   falls back to `find_cred()` after addr_limit bypass, which found the real cred.
+
 ## Device state (when online)
 - Tailscale `le1` → 100.124.251.81, SSH `u0_a50@... -p 8022` (works)
 - Local adb: `adb connect 127.0.0.1:5555` → uid 2000 (shell)
@@ -41,6 +63,20 @@
 - **IMPORTANT: both are the Oct-2025 build** (CMDAZX80-U1_R8010_S5.50, incremental 1760445918, kernel "3.18.79+ #2 Oct 14 2025").
 - Our device is Aug-2020 build (#8). **Symbol addresses differ between builds.**
 
+## Independent JS7 V4 reference (online-verified 2026-09-03)
+- Repo: BenGeorgie55/JS7-V4-mostly-stock-backup-firmware (created 2026-08-30) —
+  JS7 V4 MT6580 8.1, partition artifacts + recovery.img + getprop/dmesg/logcat (no boot/system img).
+- Same platform, NEWER build: `alps/full_k80_bsp/k80_bsp:8.1.0/O11019/1676628720:user/release-keys`,
+  display CMDAZX80-U1_R8010_S6.14, patch **2019-01-05** (still pre-Oct-2019 → 2215 unpatched there too).
+- **Partition map CONFIRMS ours**: system=mmcblk0p22, boot=p8, recovery=p9, odmdtbo=p12 (DTBO exists),
+  custom=p13 (matches jbset path), vendor=p15, userdata=p24. Validates backup-emmc.sh critical list.
+- **cmdline CONFIRMS ours**: `androidboot.selinux=permissive androidboot.veritymode=enforcing`,
+  `verifiedbootstate=green`, console `ttyMT0,921600n1`, `gpt=1`. The verity-lie signature repeats across builds.
+- **eMCP differs**: `DDR_MCP_PartNum=KMQX10013M_B419` (XDA thread unit: KMFE60012M-B214) → board variants exist.
+- **`ro.build.tags=test-keys` + release-keys fingerprint** → STATUS path-3 (test-keys recovery update.zip)
+  gains credibility; check our recovery the same way when online (`getprop ro.build.tags`).
+- Do NOT mix-match images across incrementals (1598252866 vs 1676628720 vs 1760445918).
+
 ## Kernel symbols (Oct-2025 build — reference only, NOT our kernel)
 From vmlinux-to-elf (kernel.elf):
 - commit_creds = 0xc0146cf0
@@ -53,7 +89,12 @@ From vmlinux-to-elf (kernel.elf):
    commit_creds/prepare_kernel_cred addresses. Options:
    a. Find Le1 OS_v2.0.5 (Aug 2020) firmware online → extract symbols → build 32-bit PoC.
    b. Use Oct-2025 symbols as gamble (low probability, kernel panic→reboot = recoverable).
-   c. Symbol-free exploit (addr_limit overwrite via list_del write-what-where, then dynamic symbol scan) — more engineering.
+   c. **In-memory kallsyms recovery (RECOMMENDED, template on file)** — `poc/cve-2019-2215-3.18/su98-memory-kallsyms.c`
+      defeats kptr_restrict=2: after the UAF gives arbitrary R/W, scan kernel memory for the
+      kallsyms format string, locate kallsyms_addresses, parse compressed symbols in RAM →
+      resolve commit_creds dynamically. No firmware hunt needed. CAVEAT: template is ARM64
+      (base 0xffffffc0, 8-byte pointers) — port the scanner to ARM32 (base 0xC0000000, 4-byte).
+      Core format strings are identical (shared kernel code). This replaces the cred@0x39C guess.
    NOTE (online-verified 2026-09-03): the famous XDA `su98` binary / arpruss/cve2019-2215-3.18
    is GONE (repo deleted; Karma2424 fork survives) and is **ARM64-only** (KERNEL_BASE
    0xffffffc0, WAITQUEUE 0x98, stack@0x008) — useless on our ARM32 MT6580 (base 0xC0000000,
