@@ -114,7 +114,11 @@ root shell.
 - `backup-emmc.sh` — full/critical eMMC backup pulled to the Pi disk (run as the
   FIRST root command, before any debloat)
 - `post-root/` — modular, **reversible** post-root scripts (clock fix, GPS time,
-  optimize, debloat, restore) with manifest-based undo
+  optimize, debloat, restore) with manifest-based undo. `persist.sh` installs the
+  boot hook (`/system/bin/install-recovery.sh` → `le1-boot.sh`) that actually
+  makes root + clock survive a reboot — see `FIXES-2026-09-10.md`.
+- `boot/le1-boot.sh`, `boot/install-recovery.sh` — the boot supervisor + launcher
+  (`test/test-boot.sh` verifies the supervisor offline with stubs).
 - `poc/root-sonim-xp3800/assets/su` — prebuilt ARM32 su daemon (the `~/sudaemon` prerequisite)
 - `exploit/leak_debug2.c` — dumps raw leaked kernel data (for offset tuning)
 - `exploit/leak_debug.c`, `leak_test.c`, `dump_leak.c`, `brute_leak.c` — earlier debug tools
@@ -136,4 +140,10 @@ root shell.
 3. If phase1 leaks a non-kernel pointer → run `leak_debug2.c` (set `minimumLeak=0x200`).
 4. On root: the exploit remounts /system itself (auto-detects device, no hardcoded
    mmcblk0pXX) → installs `/system/bin/sudaemon` + `/system/xbin/su` (0755 daemon
-   model, NOT setuid 6755) → root survives reboots via init service.
+   model, NOT setuid 6755) → runs `$HOME/.le1/persist.sh`, which installs the
+   **boot hook** (`/system/bin/install-recovery.sh` → `le1-boot.sh`). Root and the
+   clock then return on every boot with no exploit and no adb.
+
+   NOTE: writing `/system/etc/init/*.rc` alone does **not** persist root on this
+   ROM — its MTK init ignores custom rc files (verified). `install-recovery.sh`
+   is defined in the always-parsed ramdisk init.rc, so it is the reliable hook.

