@@ -115,10 +115,13 @@ root shell.
   FIRST root command, before any debloat)
 - `post-root/` — modular, **reversible** post-root scripts (clock fix, GPS time,
   optimize, debloat, restore) with manifest-based undo. `persist.sh` installs the
-  boot hook (`/system/bin/install-recovery.sh` → `le1-boot.sh`) that actually
-  makes root + clock survive a reboot — see `FIXES-2026-09-10.md`.
-- `boot/le1-boot.sh`, `boot/install-recovery.sh` — the boot supervisor + launcher
-  (`test/test-boot.sh` verifies the supervisor offline with stubs).
+  boot hook (`/vendor/etc/init/le1-boot.rc` → `le1-boot.sh`) that makes root +
+  clock survive a reboot; `verify-boot.sh` reports which hook fired — see
+  `FIXES-2026-09-10.md`.
+- `boot/le1-boot.sh` — boot supervisor. `boot/install-recovery.sh` — opt-in
+  fallback hook (`persist.sh --with-recovery-hook`), never installed by default.
+- `test/` — `test-boot.sh` (stub unit), `test-persist.sh` (Alpine/proot VM),
+  `test-toybox.sh` (device toybox/mksh under qemu-arm).
 - `poc/root-sonim-xp3800/assets/su` — prebuilt ARM32 su daemon (the `~/sudaemon` prerequisite)
 - `exploit/leak_debug2.c` — dumps raw leaked kernel data (for offset tuning)
 - `exploit/leak_debug.c`, `leak_test.c`, `dump_leak.c`, `brute_leak.c` — earlier debug tools
@@ -141,9 +144,12 @@ root shell.
 4. On root: the exploit remounts /system itself (auto-detects device, no hardcoded
    mmcblk0pXX) → installs `/system/bin/sudaemon` + `/system/xbin/su` (0755 daemon
    model, NOT setuid 6755) → runs `$HOME/.le1/persist.sh`, which installs the
-   **boot hook** (`/system/bin/install-recovery.sh` → `le1-boot.sh`). Root and the
-   clock then return on every boot with no exploit and no adb.
+   **boot hook** into `/vendor/etc/init/le1-boot.rc` (+ `/system/etc/init/sudaemon.rc`)
+   and `/system/bin/le1-boot.sh`. Root and the clock then return on every boot with
+   no exploit and no adb.
 
-   NOTE: writing `/system/etc/init/*.rc` alone does **not** persist root on this
-   ROM — its MTK init ignores custom rc files (verified). `install-recovery.sh`
-   is defined in the always-parsed ramdisk init.rc, so it is the reliable hook.
+   NOTE: `/vendor/etc/init` is parsed unconditionally by init in second stage
+   (unlike `/system/etc/init`, gated by `ro.boot.init_rc`). `persist.sh` does not
+   overwrite the stock `/system/bin/install-recovery.sh`; that ramdisk hook is an
+   opt-in fallback (`--with-recovery-hook`). After a reboot, `verify-boot.sh` says
+   which hook is actually live.

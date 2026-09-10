@@ -2,16 +2,18 @@
 # =============================================================================
 # LE1 root — one-shot deploy + run.
 #
-# Stages the ARM32 su daemon (prebuilt from root-sonim-xp3800) and the exploit,
-# compiles on-device (clang), runs it, and tails the panic-durable log.
+# Stages the ARM32 su daemon, the exploit and the boot-persistence files,
+# then either:
+#   * runs the exploit (only if root is not already available), or
+#   * skips straight to installing persistence when `su` already works.
 #
 # Usage:
-#   ./deploy.sh              # full deploy + run
-#   ./deploy.sh --stage-only # only stage files, don't run
-#   ./deploy.sh --run        # assume already staged, just compile + run
+#   ./deploy.sh                 # full: stage, then exploit-or-persist
+#   ./deploy.sh --force-exploit  # always run the exploit even if su works
+#   ./deploy.sh --stage-only     # only stage files
+#   ./deploy.sh --run            # assume already staged; exploit-or-persist
 #
-# Prereqs (already true): device reachable via Tailscale SSH (u0_a50:8022),
-# clang available in device Termux.
+# Prereqs: device reachable via Tailscale SSH (u0_a50:8022), clang on device.
 # =============================================================================
 set -euo pipefail
 
@@ -21,7 +23,16 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 
 ssh_cmd() { ssh -p "$SSH_PORT" "$SSH_HOST" "$@"; }
 
-MODE="${1:-full}"
+MODE="full"
+FORCE_EXPLOIT=0
+for a in "$@"; do
+    case "$a" in
+        --run)           MODE="run" ;;
+        --stage-only)    MODE="stage" ;;
+        --force-exploit) FORCE_EXPLOIT=1 ;;
+        *) echo "usage: $0 [--stage-only|--run] [--force-exploit]" >&2; exit 2 ;;
+    esac
+done
 
 echo "=== LE1 root deploy ==="
 echo "[*] Checking device reachable..."
@@ -31,7 +42,18 @@ if ! ssh_cmd 'id' >/dev/null 2>&1; then
 fi
 echo "[*] device online: $(ssh_cmd 'whoami')"
 
-if [ "$MODE" != "--run" ]; then
+# --- is root already available? -------------------------------------------
+ROOT_ACTIVE=0
+if ssh_cmd '/system/xbin/su -c id 2>/dev/null | grep -q "uid=0"'; then
+    ROOT_ACTIVE=1
+    echo "[*] root is ALREADY active — exploit not needed"
+elif [ "$FORCE_EXPLOIT" = 1 ]; then
+    echo "[*] root not active; --force-exploit set"
+else
+    echo "[*] root not active — will run the exploit"
+fi
+
+if [ "$MODE" != "run" ]; then
     echo "[*] Staging sudaemon (ARM32 prebuilt su) -> ~/sudaemon"
     scp -P "$SSH_PORT" "$REPO/poc/root-sonim-xp3800/assets/su" "$SSH_HOST:sudaemon"
     ssh_cmd 'chmod 755 ~/sudaemon'
@@ -44,11 +66,22 @@ if [ "$MODE" != "--run" ]; then
     scp -P "$SSH_PORT" "$REPO/boot/le1-boot.sh"          "$SSH_HOST:.le1/le1-boot.sh"
     scp -P "$SSH_PORT" "$REPO/boot/install-recovery.sh"  "$SSH_HOST:.le1/install-recovery.sh"
     scp -P "$SSH_PORT" "$REPO/post-root/persist.sh"      "$SSH_HOST:.le1/persist.sh"
+    scp -P "$SSH_PORT" "$REPO/post-root/verify-boot.sh"  "$SSH_HOST:.le1/verify-boot.sh"
     ssh_cmd 'chmod 755 ~/.le1/*.sh'
 fi
 
-if [ "$MODE" = "--stage-only" ]; then
+if [ "$MODE" = "stage" ]; then
     echo "[*] Staged. Run later with: ./deploy.sh --run"
+    exit 0
+fi
+
+# --- run path: persist if rooted, else exploit ----------------------------
+if [ "$ROOT_ACTIVE" = 1 ] && [ "$FORCE_EXPLOIT" != 1 ]; then
+    echo "[*] Installing/re-asserting boot persistence via su (no exploit)"
+    ssh_cmd '/system/xbin/su -c "sh $HOME/.le1/persist.sh $HOME/.le1" 2>&1'
+    echo "[*] Verifying:"
+    ssh_cmd 'sh ~/.le1/verify-boot.sh 2>&1 | head -40'
+    echo "[*] Done. Reboot to confirm the hook is live."
     exit 0
 fi
 
@@ -60,6 +93,7 @@ ssh_cmd 'clang -O2 -o le1_root le1_root.c' || {
 echo "[*] compiled ok: $(ssh_cmd 'ls -la le1_root')"
 
 echo "[*] Running exploit (log -> ~/le1_root.log, NOT /data/local/tmp: Termux uid cannot write there)"
-# NOTE: /data/local/tmp is 0771 shell:shell — u0_a50 cannot write it pre-root.
-# Log to $HOME (writable), the exploit copies it to /data/local/tmp itself once root.
 ssh_cmd './le1_root > ~/le1_root.log 2>&1; echo "exploit exit=$?"; echo "--- last 40 log lines ---"; tail -40 ~/le1_root.log'
+echo
+echo "[*] Post-run verify:"
+ssh_cmd 'sh ~/.le1/verify-boot.sh 2>&1 | head -40' || true

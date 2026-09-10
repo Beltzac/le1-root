@@ -17,6 +17,14 @@ install_persist() {
     /system/xbin/su -c "sh $PERSIST_DIR/persist.sh $PERSIST_DIR" >>"$LOG" 2>&1
     log "boot persistence asserted (rc=$?)"
 }
+# Any of the installed autostart hooks counts: vendor rc (primary), the optional
+# install-recovery wrapper, or the secondary sudaemon rc.
+hook_present() {
+    [ -f /vendor/etc/init/le1-boot.rc ] && return 0
+    [ -f /system/etc/init/sudaemon.rc ] && return 0
+    [ -x /system/bin/install-recovery.sh ] && grep -q 'le1-boot' /system/bin/install-recovery.sh 2>/dev/null && return 0
+    return 1
+}
 
 log "=== root loop started (pid $$) ==="
 
@@ -26,8 +34,7 @@ if su_ok; then
     exit 0
 fi
 
-if [ -x /system/bin/install-recovery.sh ] && [ -x /system/bin/sudaemon ] \
-   && grep -q 'le1-boot' /system/bin/install-recovery.sh 2>/dev/null; then
+if [ -x /system/bin/sudaemon ] && hook_present; then
     log "boot hook present — waiting for it instead of re-exploiting"
     exit 0
 fi

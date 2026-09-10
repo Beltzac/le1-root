@@ -1,25 +1,24 @@
 #!/system/bin/sh
 # le1-boot.sh — LE1 boot persistence (runs as root).
 #
-# Installed to /system/bin/le1-boot.sh and started by /system/bin/install-recovery.sh,
-# which is defined in the *stock ramdisk* init.rc as:
+# Started by an init service that we install (see post-root/persist.sh). The
+# preferred hook is /vendor/etc/init/le1-boot.rc: Android init parses
+# /vendor/etc/init unconditionally in second stage, and unlike
+# /system/etc/init it is not gated by ro.boot.init_rc. We do NOT overwrite the
+# stock /system/bin/install-recovery.sh by default (that hook is opt-in only).
 #
-#     service flash_recovery /system/bin/install-recovery.sh
-#         class main
-#         oneshot
+# This script is the supervisor. It never exits, so init keeps it running. It:
+#   1. restores the last-known clock (dead RTC -> 2009 -> TLS invalid)
+#   2. keeps the su daemon (/system/bin/sudaemon) up           [root for su]
+#   3. keeps Android auto_time enabled, refreshes the time cache
 #
-# The ramdisk init.rc is always parsed, unlike /system/etc/init/*.rc on this MTK
-# build (verified 2026-09: init.svc.* empty, stale loadtime logs), so this is the
-# only reliable root-autostart hook on the unit.
-#
-# CRITICAL: init SIGKILLs the process group of a `oneshot` service as soon as its
-# main process exits. This script therefore NEVER exits — it is the supervisor.
-# That is also why the sudaemon/time children survive: they are in the cgroup of
-# a service that stays alive.
+# It takes one optional argument: a hook tag, logged so `verify-boot.sh` can
+# tell which autostart path actually fired.
 #
 # Toybox only (no busybox/curl/date -d). Absolute paths: init's PATH is minimal.
 set -u
 PATH=${LE1_PATH:-/sbin:/system/bin:/system/xbin}
+HOOK="${1:-unknown}"
 
 D=${LE1_TIME_DIR:-/data/misc/le1-time}
 CACHE=$D/last
@@ -35,6 +34,20 @@ mkdir -p "$D" 2>/dev/null
 log() { echo "[$(date '+%F %T')] $*" >>"$LOG" 2>/dev/null; }
 num() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
 
+# --- single-instance guard -------------------------------------------------
+# Two hooks are installed on purpose (vendor rc + system rc). Only one
+# supervisor should run; the others exit and let init restart them (backoff).
+LOCK=$D/supervisor.pid
+if [ -f "$LOCK" ]; then
+    _old=$(cat "$LOCK" 2>/dev/null)
+    num "$_old" || _old=""
+    if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then
+        echo "[$(date '+%F %T')] le1-boot: supervisor $_old already running (hook=$HOOK) — exiting" >>"$LOG" 2>/dev/null
+        exit 0
+    fi
+fi
+echo $$ >"$LOCK" 2>/dev/null
+
 # --- clock ---------------------------------------------------------------
 restore_clock() {
     [ -f "$CACHE" ] || return 0
@@ -45,7 +58,9 @@ restore_clock() {
     n=$(date +%s 2>/dev/null)
     if num "$n" && [ "$n" -ge "$e" ]; then return 0; fi   # already later — leave it
     if date -u "@$e" >/dev/null 2>&1; then
-        log "clock restored from cache: @$e ($(date '+%F %T'))"
+        log "clock restored from cache: @$e"
+    else
+        log "clock restore attempt failed: @$e (rc=$?)"
     fi
 }
 
@@ -53,6 +68,9 @@ save_clock() {
     n=$(date +%s 2>/dev/null)
     num "$n" || return 0
     [ "$n" -ge "$MIN_EPOCH" ] || return 0
+    old=$(cat "$CACHE" 2>/dev/null | tr -d ' \t\r\n')
+    # only touch flash when the value actually moved (>30s) — eMMC wear
+    if num "$old" && [ "$n" -ge "$old" ] && [ $((n - old)) -lt 30 ]; then return 0; fi
     printf '%s\n' "$n" >"$CACHE.tmp" 2>/dev/null \
         && mv "$CACHE.tmp" "$CACHE" 2>/dev/null \
         && chmod 600 "$CACHE" 2>/dev/null
@@ -81,12 +99,12 @@ enforce_autotime() {
 }
 
 # --------------------------------------------------------------------------
-log "le1-boot start (pid $$)"
+log "le1-boot start (pid $$, hook=$HOOK)"
 restore_clock
 start_daemon
 enforce_autotime
 
-# Supervisor loop. Runs forever (see note at top). 60s cadence is cheap.
+# Supervisor loop. Runs forever. 60s cadence is cheap.
 while :; do
     sleep "$LOOP_SECS"
     start_daemon

@@ -1,20 +1,16 @@
 #!/system/bin/sh
-# install-recovery.sh — LE1 boot hook.
+# install-recovery.sh — OPTIONAL LE1 boot hook (opt-in fallback).
 #
-# The stock MediaTek ramdisk init.rc defines:
+# Installed to /system/bin/install-recovery.sh only when persist.sh is run with
+# --with-recovery-hook. The stock script is preserved as
+# install-recovery.sh.stock.
 #
-#     service flash_recovery /system/bin/install-recovery.sh
-#         class main
-#         oneshot
+# Why opt-in: this replaces a stock Android system script. The default hook is
+# /vendor/etc/init/le1-boot.rc, which init parses unconditionally and which
+# touches nothing that shipped with the ROM.
 #
-# and that ramdisk init.rc is always parsed (unlike /system/etc/init/*.rc on
-# this build), so replacing this file with a one-line launcher gives us a
-# guaranteed root process at every boot.
-#
-# The original stock script is preserved as install-recovery.sh.stock by the
-# installer, so the stock recovery-restore behaviour can be replayed if needed.
-#
-# Do NOT add logic here and exit: `oneshot` makes init kill the whole process
-# group when this exits. All the real work (which must outlive the launch) lives
-# in le1-boot.sh, which never exits.
-exec /system/bin/le1-boot.sh
+# The stock ramdisk init.rc defines:
+#     service flash_recovery /system/bin/install-recovery.sh   (class main, oneshot)
+# and a oneshot service's process group is SIGKILLed when the main process
+# exits — hence the exec into the supervisor, which never exits.
+exec /system/bin/le1-boot.sh recovery
