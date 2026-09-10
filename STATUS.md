@@ -6,13 +6,18 @@ Root survived *within a boot* but **not across a reboot**. On-device check after
 reboot: `init.svc.sudaemon` empty, `le1-loadtime.log` stale — although
 `/system/etc/init/sudaemon.rc` and `sudaemon` exist and are correct.
 
-Cause: **this MTK init silently ignores custom `/system/etc/init/*.rc`.**
+Cause: the `.rc` files were written correctly, but nothing started at boot
+(`init.svc.sudaemon` empty, `le1-loadtime.log` stale). The session concluded
+"MTK init ignores custom `/system/etc/init/*.rc`" — **unconfirmed**: `lk.bin`
+only sets `androidboot.init_rc` for meta/factory modes, so normal boot *should*
+parse `/system/etc/init`. Either way the fix does not depend on it (see below).
 
 Fix: `post-root/persist.sh` installs a hook into **`/system/bin/install-recovery.sh`**,
 which the *ramdisk* init.rc runs as root via `service flash_recovery` (always
 parsed). It execs `/system/bin/le1-boot.sh`, a supervisor that restores the cached
 clock, keeps `sudaemon` alive and keeps Android `auto_time=1`. See
-`FIXES-2026-09-10.md`. The exploit now hardens the blocking `readv` (SIGALRM),
+`FIXES-2026-09-10.md`. Verified in an Alpine/proot VM: `test/test-persist.sh`
+(install + boot chain) and `test/test-boot.sh` (supervisor) both ALL PASS. The exploit now hardens the blocking `readv` (SIGALRM),
 throttles `fsync`, and installs the hook; `root-loop.sh` no longer hammers the
 exploit at every boot.
 
