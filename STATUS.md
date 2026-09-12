@@ -1,5 +1,50 @@
 # LE1 Root Attempt — Session Log & Findings
 
+## ✅ 2026-09-12 — ROOT PERSISTS ACROSS REBOOTS (verified twice)
+
+The exploit now only has to succeed **once**. Root comes back on every boot via
+the stock `flash_recovery` service. Verified with two consecutive reboots
+(`uid=0(root)`, `init.svc.flash_recovery=running` after each).
+
+### Root cause of the old bootloop + non-persistence
+`le1-boot.sh`'s `su_ok()` ran `"$SU" -c true`, but `/system/xbin/su` **is the
+CVE-2019-2215 exploit binary** and self-triggers when the daemon is down. So the
+boot supervisor fired the exploit *inside init's boot path* every time → kernel
+race → WDT reset (`ro.boot.bootreason=wdt_by_pass_pwk`) → bootloop, and root
+never survived. Confirmed in `boot.log`.
+
+### What actually works on this ROM
+- This ROM's init does **not** parse added `/vendor/etc/init/*.rc` or
+  `/system/etc/init/*.rc` (proved with `setprop ctl.start le1boot` → unknown
+  service, even after `chcon` to the stock label). Those hooks are now `.bak`.
+- The **only** honoured hook is the stock ramdisk service defined in `/init.rc`:
+  `service flash_recovery /system/bin/install-recovery.sh` (class main, oneshot),
+  which init starts every boot. We install our wrapper there; it `exec`s
+  `/system/bin/le1-boot.sh`, a supervisor that never exits.
+- The supervisor probes the daemon with **`pidof sudaemon`**, never with `su`,
+  and wraps `settings` calls in `timeout 5` (system_server may not be up yet).
+- Removed the Termux:Boot adb hack (`persist.adb.tcp.port` + `ctl.restart adbd`,
+  40× connect loop) — disabled (`chmod -x`, `.bak` kept). It was a boot-freeze
+  source; root's supervisor now handles auto_time anyway.
+
+### Exploit fix that mattered
+`clobber_with_retry` was cut 40 → 24 attempts + a 30 ms cooldown by the
+2026-09-10 "hardening"; the cooldown let the freed binder_thread slab be
+reclaimed, so phase2 clobber failed 40/40. Restored to **40 attempts, no
+cooldown** (commit adae08b config). Successful runs landed at attempt 14 and
+attempt 1. The SIGALRM hang-guard is kept.
+
+### deploy.sh fix
+Its "is root active?" probe called `/system/xbin/su` — the exploit — freezing the
+unit before staging. Now it reads `init.svc.sudaemon`/`le1boot` via getprop and
+only calls `su` when the daemon is already up.
+
+### Files
+- `boot/le1-boot.sh` — robust supervisor (pidof, no su, timeout-wrapped settings)
+- `boot/install-recovery.sh` — `exec /system/bin/le1-boot.sh recovery`
+- `post-root/apply-fix.sh` — one-shot root-time installer used to land this fix
+- `post-root/persist.sh` — recovery hook is now the DEFAULT (`--no-recovery-hook` to skip)
+
 ## ⚠️ 2026-09-10 — the 2026-09-06 "persistent" claim was WRONG; fixed properly
 
 Root survived *within a boot* but **not across a reboot**. On-device check after

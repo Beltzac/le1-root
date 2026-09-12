@@ -43,10 +43,19 @@ fi
 echo "[*] device online: $(ssh_cmd 'whoami')"
 
 # --- is root already available? -------------------------------------------
+# NEVER probe with /system/xbin/su here: that binary IS the exploit and
+# self-triggers when the daemon is down, freezing the unit before we stage
+# anything. Use the init service state instead (world-readable via getprop).
 ROOT_ACTIVE=0
-if ssh_cmd '/system/xbin/su -c id 2>/dev/null | grep -q "uid=0"'; then
-    ROOT_ACTIVE=1
-    echo "[*] root is ALREADY active — exploit not needed"
+SVC_STATE=$(ssh_cmd 'getprop init.svc.sudaemon; getprop init.svc.le1boot' 2>/dev/null | tr -d '\r' || true)
+if printf '%s\n' "$SVC_STATE" | grep -qx running; then
+    # daemon is up, so calling su is safe now — confirm it really is root
+    if ssh_cmd '/system/xbin/su -c id 2>/dev/null | grep -q "uid=0"'; then
+        ROOT_ACTIVE=1
+        echo "[*] root is ALREADY active (init service running) — exploit not needed"
+    else
+        echo "[!] init service running but su check failed — will run the exploit"
+    fi
 elif [ "$FORCE_EXPLOIT" = 1 ]; then
     echo "[*] root not active; --force-exploit set"
 else

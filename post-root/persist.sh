@@ -28,13 +28,18 @@ SRC=""
 MODE="install"
 for a in "$@"; do
     case "$a" in
-        --with-recovery-hook) RECOVERY_HOOK=1 ;;
+        --with-recovery-hook) RECOVERY_HOOK=1 ;;   # legacy no-op: recovery hook is now the default
+        --no-recovery-hook)   RECOVERY_HOOK=0 ;;
         --uninstall)          MODE="uninstall" ;;
         --*)                  echo "persist: unknown option: $a" >&2; exit 1 ;;
         *)                    SRC="$a" ;;
     esac
 done
-RECOVERY_HOOK="${RECOVERY_HOOK:-0}"
+# DEFAULT ON. Verified on-device (2026-09-12): this ROM's init does NOT parse
+# added /vendor/etc/init/*.rc or /system/etc/init/*.rc files (setprop ctl.start
+# → unknown service). The only hook it honours is the stock ramdisk service
+# `flash_recovery /system/bin/install-recovery.sh` (class main, oneshot).
+RECOVERY_HOOK="${RECOVERY_HOOK:-1}"
 [ -n "$SRC" ] || SRC="$(dirname "$0")"
 
 log() { echo "persist: $*"; }
