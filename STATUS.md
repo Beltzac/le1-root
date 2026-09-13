@@ -1,5 +1,47 @@
 # LE1 Root Attempt — Session Log & Findings
 
+## ✅ 2026-09-13 — boot instability FIXED + debloat applied (no reboot)
+
+### "Half the time it does not boot" — root cause
+Two **leftovers from the previous root/time attempt autostarted and fired the exploit at boot**:
+- `~/bin/time-bootstrap` (run by the `time-watchdog` runit service every 300 s) called
+  `su -c true`. Termux's `su` wrapper execs `/system/xbin/su`, which **is the CVE-2019-2215
+exploit and self-triggers when the daemon is down** → kernel race → WDT reset → reboot.
+- `time-watchdog/run` also ran the **adb hack** (`setprop persist.adb.tcp.port` +
+  `adb connect 127.0.0.1:5555` + `adb shell settings …`) in a 300 s loop — the known
+  boot-freeze.
+- `~/.termux/boot/20-autotime.sh` (Termux:Boot adb hack) had become executable again.
+- Dormant leftovers: `~/root-loop.sh`, `~/bin/adb-time-ensure|adb-time-kick|adb-clock-watchdog`
+  (none currently hooked, but removed from the load path).
+
+### Fix applied (live, no reboot)
+- Moved `20-autotime.sh` + `.bak` → `~/.termux/boot-disabled/`.
+- `sv stop time-watchdog` + `touch down`; replaced its run script with a no-op
+  (backup `run.adb-hack.bak`).
+- Moved `root-loop.sh`, `time-bootstrap{,.bak}`, `adb-time-ensure|kick|clock-watchdog` →
+  `~/disabled-scripts/`; `chmod -x ~/bin/time-status`.
+- Root supervisor `le1-boot.sh` already handles clock + `auto_time`, so the Termux time
+  machinery is redundant.
+- **Always-on VPN** so Tailscale comes back after boot: `settings put secure
+  always_on_vpn_app com.tailscale.ipn`; deviceidle whitelist `+com.tailscale.ipn +com.termux
+  +com.termux.boot` (this is also what lets us SSH back in — the "offline" windows were
+  Tailscale not reconnecting).
+
+### Debloat applied (`post-root/le1-online-fix.sh`)
+Re-enabled `com.wwc2.mainui` (volume/brightness OSD). Disabled + APK-backed-up to
+`/sdcard/le1-app-backup/`: `com.abupdate.fota_demo_iot`, `com.wwc2.networks`,
+`com.wwc2.market`, `com.mediatek.mtklogger`, `com.wwc2.systemupdate_apk`, `com.wwc2.mcuupdate`,
+`com.wwc2.voice_assistant`, `com.mediatek.ygps`, `com.wwc2.panoramic`. Restore with
+`post-root/le1-restore.sh`.
+
+### Perf (runtime)
+Animations 0.5×, `deadline` I/O scheduler, readahead 512 KB.
+
+### Kernel side (TODO, needs rebuild — biggest win)
+`CONFIG_SWAP` is **not set**, so the built-in ZRAM can't be used as swap; `CONFIG_KSM` also unset.
+Rebuild `k80_bsp_defconfig` with `CONFIG_SWAP=y`, `CONFIG_FRONTSWAP=y`, `CONFIG_KSM=y` and debug
+off → 256–512 MB compressed zram swap on 1 GB, plus KSM.
+
 ## ✅ 2026-09-12 — ROOT PERSISTS ACROSS REBOOTS (verified twice)
 
 The exploit now only has to succeed **once**. Root comes back on every boot via
