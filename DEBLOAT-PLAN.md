@@ -62,6 +62,20 @@ Targets (all OEM-signed, system-UID, autostart, remote/telemetry):
 | `com.wwc2.voice_assistant` | Voice Assistant | always-on mic/system proc (AISpeech AIOS) |
 | `com.mediatek.ygps` | YGPS | MTK GPS factory test app |
 | `com.wwc2.panoramic` | WPanoramic | 360° surround-view camera app (only if no 360-cam hardware) |
+| `com.google.android.apps.maps` | Maps | 106 MB resident, unused in-car |
+
+### Perf batch (2nd wave, applied 2026-09-13)
+| Package | Note |
+|---|---|
+| `com.google.android.partnersetup` | Play setup, background |
+| `com.google.android.onetimeinitializer` | one-shot, useless after |
+| `com.google.android.configupdater` | background |
+| `com.google.android.backuptransport` | background |
+| `com.google.android.ext.services` | GMS support svc |
+| `jp.co.omronsoft.openwnn` | unused IME (LatinIME is default) |
+| `com.android.gallery3d` | gallery (FileManager covers) |
+| `com.mediatek.engineermode` | MTK factory test tool |
+| `com.google.android.apps.nbu.files` | Files by Google (unused) |
 
 **Note:** `com.wwc2.panoramic` (WPanoramic) is the **360° surround-view camera app**
 (bird's-eye stitcher), controlled by `WMain`'s `PanoramicManager` (`sendTouchXY`,

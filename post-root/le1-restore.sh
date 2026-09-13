@@ -6,7 +6,7 @@ PATH=/sbin:/system/bin:/system/xbin
 BK=/sdcard/le1-app-backup
 log() { echo "le1-restore: $*"; }
 
-BAD="com.abupdate.fota_demo_iot com.wwc2.networks com.wwc2.market com.mediatek.mtklogger com.wwc2.systemupdate_apk com.wwc2.mcuupdate com.wwc2.voice_assistant com.mediatek.ygps com.wwc2.panoramic"
+BAD="com.abupdate.fota_demo_iot com.wwc2.networks com.wwc2.market com.mediatek.mtklogger com.wwc2.systemupdate_apk com.wwc2.mcuupdate com.wwc2.voice_assistant com.mediatek.ygps com.wwc2.panoramic com.google.android.apps.maps com.google.android.partnersetup com.google.android.onetimeinitializer com.google.android.configupdater com.google.android.backuptransport com.google.android.ext.services jp.co.omronsoft.openwnn com.android.gallery3d com.mediatek.engineermode com.google.android.apps.nbu.files"
 
 # restore purged APKs first (so pm enable can find them after a reboot)
 for p in $BAD; do
