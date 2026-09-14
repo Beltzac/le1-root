@@ -164,3 +164,23 @@ else
 fi
 
 log "===== apply-autostart done ====="
+
+# ------------------------------------------------------------------ 6. supervisor
+# Install the updated boot supervisor (takes effect on next boot).
+if [ -f "$STAGE/le1-boot.sh" ]; then
+  mount -o rw,remount /system 2>/dev/null
+  cp -f /system/bin/le1-boot.sh "/system/bin/le1-boot.sh.le1bak.$(date +%s)" 2>/dev/null
+  cp -f "$STAGE/le1-boot.sh" /system/bin/le1-boot.sh 2>/dev/null \
+    && chmod 755 /system/bin/le1-boot.sh 2>/dev/null \
+    && log "installed /system/bin/le1-boot.sh (active next boot)" \
+    || log "WARN: could not install le1-boot.sh"
+  mount -o ro,remount /system 2>/dev/null
+  # Optionally restart the running supervisor now so its loop manages the daemons.
+  if [ "${RESTART_SUPERVISOR:-0}" = "1" ]; then
+    old=$(pidof -o $$ -o $PPID le1-boot.sh 2>/dev/null)
+    for pid in $old; do kill "$pid" 2>/dev/null; done
+    sleep 1
+    nohup /system/bin/le1-boot.sh manual >/dev/null 2>&1 &
+    log "supervisor restarted (manual)"
+  fi
+fi
