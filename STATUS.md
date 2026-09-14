@@ -1,5 +1,8 @@
 # LE1 Root Attempt — Session Log & Findings
 
+> **Pending plan:** SSH + Tailscale autostart with no app/Termux dependency →
+> `BOOT-AUTOSTART-PLAN.md` (ready, not applied).
+
 ## ✅ 2026-09-13 — boot instability FIXED + debloat applied (no reboot)
 
 ### "Half the time it does not boot" — root cause
