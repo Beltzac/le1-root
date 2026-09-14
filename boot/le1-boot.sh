@@ -83,15 +83,38 @@ enforce_autotime() {
     fi
 }
 
+# --- app-free services (no Termux app, no Tailscale app) ------------------
+# Wrappers live in /data/le1-ssh and /data/le1-tailscale; each backgrounds its own
+# daemon. The supervisor only checks liveness and restarts. Never uses su.
+ensure_sshd() {
+    pidof dropbear >/dev/null 2>&1 && return 0
+    [ -x /data/le1-ssh/start-sshd.sh ] || return 0
+    /data/le1-ssh/start-sshd.sh >/dev/null 2>&1 &
+    sleep 1
+    if pidof dropbear >/dev/null 2>&1; then log "sshd (re)started"; else log "sshd did not start"; fi
+}
+
+ensure_tailscale() {
+    pidof tailscaled >/dev/null 2>&1 && return 0
+    [ -x /data/le1-tailscale/start.sh ] || return 0
+    /data/le1-tailscale/start.sh >/dev/null 2>&1 &
+    sleep 2
+    if pidof tailscaled >/dev/null 2>&1; then log "tailscaled (re)started"; else log "tailscaled did not start"; fi
+}
+
 # --------------------------------------------------------------------------
 log "le1-boot start (pid $$, hook=$HOOK)"
 restore_clock
 start_daemon
+ensure_sshd
+ensure_tailscale
 
 # Supervisor loop. Runs forever. 60s cadence is cheap.
 while :; do
     sleep "$LOOP_SECS"
     start_daemon
+    ensure_sshd
+    ensure_tailscale
     enforce_autotime
     save_clock
 done
