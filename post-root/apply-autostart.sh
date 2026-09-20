@@ -94,7 +94,7 @@ for d in "$H" /; do
   chmod 700 "$d/.ssh" 2>/dev/null
   chmod 600 "$d/.ssh/authorized_keys" 2>/dev/null
 done
-exec "$D/dropbearmulti" dropbear -F -E -s -r "$D/host_ed25519" \
+exec "$D/dropbearmulti" dropbear -F -s -r "$D/host_ed25519" \
      -p 0.0.0.0:8022 -P "$D/dropbear.pid" >>"$D/sshd.log" 2>&1
 EOF
 chmod 755 "$SSHDIR/start-sshd.sh"
@@ -129,7 +129,7 @@ S=/data/misc/le1-tailscale
 [ -c /dev/net/tun ] || { mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 600 /dev/net/tun; }
 pidof tailscaled >/dev/null 2>&1 && exit 0
 "$B/bin/tailscaled" --statedir="$S" --socket="$B/tailscaled.sock" \
-    --tun=tailscale0 --port=0 --accept-dns=false --no-logs-no-support \
+    --tun=tailscale0 --port=0 --no-logs-no-support \
     >>"$B/tailscaled.log" 2>&1 &
 i=0
 while [ $i -lt 30 ]; do [ -S "$B/tailscaled.sock" ] && break; sleep 1; i=$((i+1)); done
