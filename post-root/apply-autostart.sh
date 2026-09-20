@@ -137,6 +137,10 @@ cat > "$TSDIR/start.sh" <<'EOF'
 #!/system/bin/sh
 B=/data/le1-tailscale
 S=/data/misc/le1-tailscale
+# tailscale 1.103's logpolicy panics ("no safe place found to store log state")
+# unless a private 0700 logs dir exists; 1.102.x did not need this.
+mkdir -p "$S/logs" 2>/dev/null
+chmod 700 "$S" "$S/logs" 2>/dev/null
 [ -c /dev/net/tun ] || { mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 600 /dev/net/tun; }
 # Android's netd routes the tailscaled bypass mark (0x80000) to the `main` table,
 # which has an explicit `unreachable default` -> control/derp dials fail with

@@ -1,10 +1,11 @@
 # LE1 — root `tailscaled` on Android: research, theory and plan
 
-Status: **WORKING (2026-09-20).** Root `tailscaled` is up on the LE1 as node
-`le1-1` / `100.122.21.101`, with direct peer connectivity (tailscale ping from the
-node to the phone: pong via 179.68.107.16:3118 in 63 ms; phone ping to
-100.122.21.101: 2/2). The working recipe is: **tailscale >= 1.103** for DNS + one
-**`ip rule`** for the Android bypass mark + a correct clock.
+Status: **WORKING (2026-09-20) and boot-tested.** After a real reboot the root
+OpenSSH sshd came up on 8022 by itself (no Termux), the supervisor started, the
+`ip rule` was applied, and root `tailscaled` logged in as node `le1-1`
+(`100.122.21.101`) with direct peer connectivity (tailscale ping to the phone:
+pong in 86 ms; phone ping to it 2/2). Three gotchas were found at boot and are
+fixed in `apply-autostart.sh` / `boot/le1-boot.sh` (see Step 3 and below).
 
 Goal: run the official static `tailscaled` as **root** on the LE1 (LeTV/MT6580,
 Android 8.1) so Tailscale comes up at boot with **no app and no Termux**, keeping
@@ -177,6 +178,15 @@ tailscaled --statedir=/data/misc/le1-tailscale \
 - `--accept-dns` is a **`tailscale up`** flag, never a `tailscaled` flag.
 - The auth key must be passed as `--authkey=`; a stale/one-time key silently
   falls back to an interactive login URL.
+- **1.103's `logpolicy` panics at startup** — `panic: no safe place found to store
+  log state` — unless `<statedir>/logs` exists and is mode **0700**, root-owned.
+  1.102.x did not need this. The wrapper now does
+  `mkdir -p "$S/logs"; chmod 700 "$S" "$S/logs"`.
+- **The clock reverts to the dead-RTC default (~2007) a few minutes after boot.**
+  The supervisor restores it from `/data/misc/le1-time/last` at startup, but Android
+  slams it back. Fix: `restore_clock` now also runs **every 60 s loop** (and
+  `auto_time` was set to 0 in testing). Without a correct clock every TLS handshake
+  fails (`certificate ... not yet valid`).
 
 ### Step 4 — login and handover
 ```sh

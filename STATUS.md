@@ -36,6 +36,13 @@ Applied the SSH half of `BOOT-AUTOSTART-PLAN.md` on the device.
   `le1` (100.124.251.81) still exists. Decision needed. `ensure_tailscale` is enabled
   again in the supervisor. Keep the app's always-on VPN until a full reboot proves the
   root daemon comes up on its own (the boot clock depends on the supervisor cache).
+- **Boot-autostart test PASSED** (2026-09-20, real reboot): our root OpenSSH sshd won
+  8022 on its own (no Termux), the supervisor started, the `ip rule 5200` was applied,
+  and the root node came up. Two boot-only bugs found and fixed:
+  (1) tailscale 1.103 `logpolicy` panics unless `<statedir>/logs` is 0700 root-owned;
+  (2) Android reverts the clock to the dead-RTC default (~2007) a few minutes after
+  boot, so `restore_clock` now re-runs every supervisor loop and `auto_time` was set
+  to 0. Codes committed.
 - References: `WayneShao/KernelSU-Tailscaled` issue #1 and `anasfanani/magisk-tailscaled`
   hit the same wall (the module ships no workaround).
 - Runner `apply-autostart-run.sh` now stages in the Termux home (`u0_a50` cannot

@@ -115,6 +115,10 @@ ensure_tailscale
 # Supervisor loop. Runs forever. 60s cadence is cheap.
 while :; do
     sleep "$LOOP_SECS"
+    # Android's auto_time/RTC can slam the clock back to the dead-RTC default
+    # (~2007) a few minutes after boot, which kills every TLS handshake. Re-assert
+    # the cached time every loop so tailscaled keeps working.
+    restore_clock
     start_daemon
     ensure_sshd
     ensure_tailscale
