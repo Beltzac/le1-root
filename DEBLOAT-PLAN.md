@@ -1,7 +1,8 @@
 # LE1 — volume OSD restore + debloat plan (apply when online)
 
-Created 2026-09-12. Read this before running anything. **Nothing here has been
-applied yet** — the unit was offline.
+Created 2026-09-12. Read this before running anything. **APPLIED 2026-09-13**
+(`post-root/le1-online-fix.sh`, 19 packages disabled, 2nd perf batch included —
+see `STATUS.md`). This document is kept as the reference/rollback list.
 
 ## Goal
 1. Bring back the **volume / brightness OSD** (lost because `com.wwc2.mainui` was disabled).

@@ -133,6 +133,9 @@ root shell.
 - `reference/sched_318.h` — task_struct layout source (stack@0x4)
 - `RESEARCH.md` — full session log + all findings
 - `STATUS.md` — earlier session log
+- `TAILSCALED-ROOT.md` — running `tailscaled` as root on Android: the netd DNS/route
+  blockers and the fix plan (tailscale >= 1.103 + main-table default route)
+- `BOOT-AUTOSTART-PLAN.md` — app-free boot autostart (SSH done; Tailscale per the above)
 
 ## Next steps
 

@@ -93,13 +93,27 @@ mount -o ro,remount /system
 
 ## Part 2 — Tailscale without the app
 
+> **STATUS 2026-09-20 — read `TAILSCALED-ROOT.md` first.** Two Android-specific
+> blockers were confirmed on the device; the original plan below is otherwise fine:
+> 1. **DNS** — no `/etc/resolv.conf`; Go's resolver falls back to `127.0.0.1:53`.
+>    Fixed natively by tailscale **>= 1.103** (`dnsproxyd`), absent from 1.102.4.
+> 2. **Route** — the control socket's Android bypass mark `0x80000` lands in the
+>    **`main`** table, which has **no default route** -> `network is unreachable`.
+>    The supervisor must mirror the active network's default route into `main`.
+
 Run **root `tailscaled`** using the official static **Linux/arm (GOARM7)** build — the SoC
-is Cortex-A7 / armv7l.
+is Cortex-A7 / armv7l. **Use >= 1.103** (see 2.1).
 
 ### 2.1 Get the binary
 `https://pkgs.tailscale.com/stable/tailscale_<VER>_arm.tgz` → extract `tailscale` +
 `tailscaled` to `/data/le1-tailscale/bin/`. (Download on the LE1 itself, or fetch on the
 phone and `scp`; the phone is aarch64 so it cannot build armv7.)
+
+**Version floor: 1.103.** 1.102.4 (stable at the time of writing) has no `dnsproxyd`
+support (`strings tailscaled | grep -c dnsproxyd` -> 0) and cannot resolve the control
+plane. Use the unstable build until 1.103 is stable:
+`https://pkgs.tailscale.com/unstable/tailscale_1.103.229_arm.tgz`
+(staged at `dist/tailscale_1.103.229_arm/`; verified: 4 `dnsproxyd` strings).
 
 ### 2.2 Reuse the existing node identity (avoid a second node / new IP)
 Try to copy the app's tailscaled state so the node keeps IP `100.124.251.81`:
@@ -121,11 +135,20 @@ ls /dev/net/tun || { mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 600 /
 ```sh
 #!/system/bin/sh
 B=/data/le1-tailscale
+# Android's netd keeps the default route out of the main table; tailscaled's
+# marked sockets land there -> "network is unreachable". Mirror the active
+# network's default into main (idempotent; redone every supervisor loop).
+GW=$(getprop dhcp.wlan0.gateway 2>/dev/null)
+[ -n "$GW" ] || GW=$(ip route show table 1004 2>/dev/null | grep '^default' | cut -d' ' -f3)
+[ -n "$GW" ] && ip route replace default via "$GW" dev wlan0 table main
+# 1.102.x only: give Go a resolver (1.103+ uses /dev/socket/dnsproxyd instead)
+D=$(getprop net.dns1 2>/dev/null)
+[ -n "$D" ] && printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf 2>/dev/null
 "$B/bin/tailscaled" \
   --statedir=/data/misc/le1-tailscale \
   --socket="$B/tailscaled.sock" \
   --tun=tailscale0 --port=0 \
-  --accept-dns=false --no-logs-no-support \
+  --netfilter-mode=off --no-logs-no-support \
   >>/data/misc/le1-time/tailscaled.log 2>&1 &
 sleep 3
 "$B/bin/tailscale" --socket="$B/tailscaled.sock" up \

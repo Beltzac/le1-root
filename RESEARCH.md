@@ -237,3 +237,31 @@ Key facts:
 - Port needs: (a) 32-bit binder struct sizes (computed in PORT.md), (b) 3.18 struct-file/
   task_struct/epitem offsets (dump on device via our 2215 kernel R/W), (c) drop SELinux
   steps (already permissive), (d) drop KASLR steps (fixed base 0xC0008000).
+
+## SESSION 7 — native daemons on Android (root sshd + root tailscaled)
+
+Applied the boot-autostart plan (SSH half) and diagnosed the Tailscale half. Full
+write-up: `TAILSCALED-ROOT.md`.
+
+### Root SSH — solved
+- **dropbear v2026.94 is unusable here**: it prints `(Syslog support not compiled in,
+  using stderr)`, and with an `-r <ed25519>` host key + a valid `authorized_keys`
+  (same key Termux uses) it still answers `Permission denied (publickey)` — server
+  offers only `publickey` and never accepts. `-E` no longer exists in v2026.
+- **OpenSSH sshd from the Termux prefix, run as root, works**:
+  `LD_LIBRARY_PATH=$PREFIX/lib $PREFIX/bin/sshd -D -e -f /data/le1-ssh/sshd_config`
+  with `AuthorizedKeysFile /data/le1-ssh/authorized_keys`, `PermitRootLogin
+  prohibit-password`, and `root:x:0:0:root:/data/le1-ssh:/system/bin/sh` in
+  `/system/etc/passwd`. Verified: `ssh -p 2223 root@le1 id` -> `uid=0(root)`.
+- Supervisor `ensure_sshd` now checks `pidof sshd`; the wrapper skips if 8022 is
+  already bound (Termux's sshd) so nothing double-binds.
+
+### Clock
+- RTC is dead -> boot clock is 2007 -> TLS fails. `toybox date` has **no `-s`/`-D`**;
+  the working form is `date -u "@<epoch>"`. No busybox on the device.
+
+### Root tailscaled — two Android blockers (see TAILSCALED-ROOT.md)
+1. DNS: no `/etc/resolv.conf`; Go resolver -> `127.0.0.1:53` refused.
+   tailscale >= 1.103 uses `dnsproxyd` (verified: 1.103.229 has it, 1.102.4 does not).
+2. Route: Android bypass mark `0x80000` -> `main` table -> no default -> unreachable.
+   Fix: mirror the active network default into `main` on every supervisor loop.

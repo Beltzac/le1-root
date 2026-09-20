@@ -21,11 +21,19 @@ Applied the SSH half of `BOOT-AUTOSTART-PLAN.md` on the device.
   `/data/le1-ssh/start-sshd.sh` (which guards on port 8022 so Termux's sshd can't
   double-bind). Installed; **active next boot** (starts before Termux:Boot, so it
   wins 8022).
-- **root `tailscaled` disabled** (`ensure_tailscale` commented out): on this ROM
-  Android's netd gives root no DNS/default route, so it stays "logged out"
-  (`failed to resolve controlplane.tailscale.com`). The Tailscale **app's** always-on
-  VPN remains the transport. The apply now clears `always_on_vpn` **only** if root
+- **root `tailscaled` still not working** — diagnosed, see **`TAILSCALED-ROOT.md`**.
+  Two Android-isms: (1) **DNS** — no `/etc/resolv.conf`, Go resolver falls back to
+  `127.0.0.1:53`; fixed natively in tailscale **>= 1.103** (`dnsproxyd`), and our
+  1.102.4 lacks it (`strings tailscaled | grep -c dnsproxyd` -> 0, unstable 1.103.229
+  -> 4). (2) **Route** — the control socket's Android bypass mark `0x80000` is sent to
+  the **`main`** table, which has **no default route** -> `network is unreachable`.
+  Fix = use tailscale >= 1.103 + mirror the active network's default route into
+  `main` on every supervisor loop (`ip route replace default via $GW dev wlan0 table main`).
+  Until then `ensure_tailscale` stays disabled and the Tailscale **app's** always-on
+  VPN remains the transport. The apply clears `always_on_vpn` **only** if root
   tailscaled actually gets an address — so a failed auth can never strand the unit.
+- Reference: `WayneShao/KernelSU-Tailscaled` issue #1 and `anasfanani/magisk-tailscaled`
+  hit exactly the same wall (the module ships no workaround).
 - Runner `apply-autostart-run.sh` now stages in the Termux home (`u0_a50` cannot
   write `/data/local/tmp`).
 
