@@ -138,9 +138,19 @@ cat > "$TSDIR/start.sh" <<'EOF'
 B=/data/le1-tailscale
 S=/data/misc/le1-tailscale
 [ -c /dev/net/tun ] || { mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 600 /dev/net/tun; }
+# Android's netd keeps the default route OUT of the main table, but tailscaled's
+# bypass-marked (0x80000) control/derp sockets are steered there -> "network is
+# unreachable". Mirror the active network's default into main (idempotent; also
+# re-done every supervisor loop because the tables are rebuilt on net change).
+GW=$(getprop dhcp.wlan0.gateway 2>/dev/null)
+[ -n "$GW" ] || GW=$(ip route show table 1004 2>/dev/null | grep '^default' | cut -d' ' -f3)
+[ -n "$GW" ] && ip route replace default via "$GW" dev wlan0 table main 2>/dev/null
+# Only needed for tailscale 1.102.x, which has no dnsproxyd support (1.103+ does).
+D=$(getprop net.dns1 2>/dev/null)
+[ -n "$D" ] && printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf 2>/dev/null
 pidof tailscaled >/dev/null 2>&1 && exit 0
 "$B/bin/tailscaled" --statedir="$S" --socket="$B/tailscaled.sock" \
-    --tun=tailscale0 --port=0 --no-logs-no-support \
+    --tun=tailscale0 --port=0 --netfilter-mode=off --no-logs-no-support \
     >>"$B/tailscaled.log" 2>&1 &
 i=0
 while [ $i -lt 30 ]; do [ -S "$B/tailscaled.sock" ] && break; sleep 1; i=$((i+1)); done

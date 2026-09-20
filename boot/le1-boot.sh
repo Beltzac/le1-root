@@ -94,13 +94,11 @@ ensure_sshd() {
     if pidof sshd >/dev/null 2>&1; then log "sshd (re)started"; else log "sshd did not start"; fi
 }
 
-# Not auto-started: root tailscaled cannot reach the controlplane on this ROM —
-# Android's netd gives root no DNS/route, so it stays "logged out". The Tailscale
-# *app* (always-on VPN) already provides the transport, so we keep that instead.
-# Left here for a future netd fix (ip rule / fwmark).
-
+# Enabled (2026-09-20). start.sh mirrors the active network's default route into
+# the main table on every call (idempotent) and exits early if tailscaled already
+# runs, so calling it each loop keeps the marked control path routable after
+# network changes. Needs tailscale >= 1.103 for DNS (see TAILSCALED-ROOT.md).
 ensure_tailscale() {
-    pidof tailscaled >/dev/null 2>&1 && return 0
     [ -x /data/le1-tailscale/start.sh ] || return 0
     /data/le1-tailscale/start.sh >/dev/null 2>&1 &
     sleep 2
@@ -112,14 +110,14 @@ log "le1-boot start (pid $$, hook=$HOOK)"
 restore_clock
 start_daemon
 ensure_sshd
-# ensure_tailscale  # disabled: root tailscaled has no netd DNS/route (see above)
+ensure_tailscale
 
 # Supervisor loop. Runs forever. 60s cadence is cheap.
 while :; do
     sleep "$LOOP_SECS"
     start_daemon
     ensure_sshd
-    # ensure_tailscale  # disabled: root tailscaled has no netd DNS/route
+    ensure_tailscale
     enforce_autotime
     save_clock
 done
