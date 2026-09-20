@@ -1,7 +1,37 @@
 # LE1 Root Attempt — Session Log & Findings
 
 > **Pending plan:** SSH + Tailscale autostart with no app/Termux dependency →
-> `BOOT-AUTOSTART-PLAN.md` (ready, not applied).
+> `BOOT-AUTOSTART-PLAN.md` — **applied 2026-09-20 for SSH** (root OpenSSH sshd);
+> root tailscaled deferred (netd gives root no DNS/route — see below).
+
+## ✅ 2026-09-20 — boot autostart applied: root SSH (no Termux runtime)
+
+Applied the SSH half of `BOOT-AUTOSTART-PLAN.md` on the device.
+- **Clock was stuck at 2007** (dead RTC, no busybox); set correctly with
+  `date -u "@EPOCH"` (toybox accepts the @epoch operand; `-s`/`-D` do not work).
+- **Root SSH = OpenSSH sshd from the Termux prefix, run as root**:
+  config `/data/le1-ssh/sshd_config` (port 8022, `AuthorizedKeysFile` absolute),
+  keys `/data/le1-ssh/authorized_keys`, passwd entry
+  `root:x:0:0:root:/data/le1-ssh:/system/bin/sh` in `/system/etc/passwd`.
+  **VERIFIED**: `ssh -p 2223 root@le1 id` → `uid=0(root)`.
+- **dropbear v2026.94 was abandoned**: it silently refused our valid ed25519 key
+  (server offered only `publickey`, always denied) even with `-D` pointed at the key.
+  OpenSSH works with the same key.
+- `/system/bin/le1-boot.sh` updated: `ensure_sshd` checks `pidof sshd` and starts
+  `/data/le1-ssh/start-sshd.sh` (which guards on port 8022 so Termux's sshd can't
+  double-bind). Installed; **active next boot** (starts before Termux:Boot, so it
+  wins 8022).
+- **root `tailscaled` disabled** (`ensure_tailscale` commented out): on this ROM
+  Android's netd gives root no DNS/default route, so it stays "logged out"
+  (`failed to resolve controlplane.tailscale.com`). The Tailscale **app's** always-on
+  VPN remains the transport. The apply now clears `always_on_vpn` **only** if root
+  tailscaled actually gets an address — so a failed auth can never strand the unit.
+- Runner `apply-autostart-run.sh` now stages in the Termux home (`u0_a50` cannot
+  write `/data/local/tmp`).
+
+Still to do from this plan: **reboot test** (confirm our sshd wins 8022 and stays up),
+GPS→NTP→HTTP clock chain, fstrim/logd, kernel rebuild.
+
 
 ## ✅ 2026-09-13 — boot instability FIXED + debloat applied (no reboot)
 

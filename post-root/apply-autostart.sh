@@ -159,7 +159,7 @@ log "tailscale wrapper written"
 # ------------------------------------------------------------------ 5. run + verify
 "$SSHDIR/start-sshd.sh" &
 sleep 3
-pidof dropbear >/dev/null 2>&1 && log "SSH: dropbear running" || { log "SSH: FAILED (see $SSHDIR/sshd.log)"; tail -5 "$SSHDIR/sshd.log" 2>/dev/null | sed 's/^/  sshd: /'; }
+pidof sshd >/dev/null 2>&1 && log "SSH: sshd running" || { log "SSH: FAILED (see $SSHDIR/sshd.log)"; tail -5 "$SSHDIR/sshd.log" 2>/dev/null | sed 's/^/  sshd: /'; }
 
 "$TSDIR/start.sh" &
 sleep 8
