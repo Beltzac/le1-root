@@ -141,10 +141,9 @@ EOF
 chmod 755 "$TSDIR/start.sh"
 log "tailscale wrapper written"
 
-# stop the Android app's VPN so it does not fight the daemon
-settings delete secure always_on_vpn_app >/dev/null 2>&1
-settings delete secure always_on_vpn_lockdown >/dev/null 2>&1
-log "cleared always_on_vpn settings"
+# NOTE: always_on_vpn is cleared only AFTER root tailscaled is verified up with
+# an address (see "run + verify" below). That way a failed/expired auth can never
+# cut the unit's only remote path (it has no LAN route from us).
 
 # ------------------------------------------------------------------ 5. run + verify
 "$SSHDIR/start-sshd.sh" &
@@ -161,6 +160,16 @@ else
   log "TS: FAILED (see $TSDIR/tailscaled.log)"
   tail -8 "$TSDIR/tailscaled.log" 2>/dev/null | sed 's/^/  ts: /'
   [ -s "$TSDIR/up.log" ] && tail -5 "$TSDIR/up.log" | sed 's/^/  ts-up: /'
+fi
+
+# Hand the VPN over to root tailscaled ONLY once it provably has an address.
+# If auth failed, keep the app's always-on VPN so the unit stays reachable.
+if pidof tailscaled >/dev/null 2>&1 && ip addr show tailscale0 2>/dev/null | grep -q 'inet '; then
+  settings delete secure always_on_vpn_app >/dev/null 2>&1
+  settings delete secure always_on_vpn_lockdown >/dev/null 2>&1
+  log "cleared always_on_vpn settings (root tailscaled up with address)"
+else
+  log "WARN: root tailscaled not verified (no addr) - KEEPING app always-on VPN for safety"
 fi
 
 log "===== apply-autostart done ====="
