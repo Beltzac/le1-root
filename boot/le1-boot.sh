@@ -76,10 +76,14 @@ save_clock() {
 enforce_autotime() {
     [ -x "$SETTINGS" ] || return 0
     at=$(timeout 5 "$SETTINGS" get global auto_time 2>/dev/null)
-    if [ "$at" != "1" ]; then
-        timeout 5 "$SETTINGS" put global auto_time 1 >/dev/null 2>&1
-        timeout 5 "$SETTINGS" put global ntp_server pool.ntp.org >/dev/null 2>&1
-        log "auto_time re-enabled"
+    if [ "$at" != "0" ]; then
+        # auto_time=1 makes Android re-sync the clock from the (dead) RTC, which
+        # slams it back to 2007 a few minutes after boot -> every TLS handshake
+        # fails ("certificate not yet valid"). There is no working NTP here, so
+        # keep auto_time OFF and let restore_clock own the clock.
+        timeout 5 "$SETTINGS" put global auto_time 0 >/dev/null 2>&1
+        timeout 5 "$SETTINGS" put global auto_time_zone 0 >/dev/null 2>&1
+        log "auto_time disabled (dead RTC would revert the clock)"
     fi
 }
 
