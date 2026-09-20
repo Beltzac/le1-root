@@ -130,6 +130,31 @@ $ tail files/diag.log
   written (`hwclock -w`; toybox has no `hwclock`), soft reboots would keep the time,
   but full power-offs never will — hence the boot NTP sync.
 
+## Runbook — deploy the GPS layer (if the background runner dies)
+
+The committed, re-runnable source of truth is `apply-gps-clock.sh`. Run it from
+Termux on the phone whenever the unit is reachable:
+
+```bash
+# LAN (default host 172.26.39.132)
+WAIT=0 bash ~/le1-root/apply-gps-clock.sh
+
+# or via the root node / any address
+H=u0_a50@100.122.21.101 WAIT=0 bash ~/le1-root/apply-gps-clock.sh
+```
+
+It stages `ntp/gps.py`, `ntp/gpstime.sh` and `boot/le1-boot.sh`, installs them as
+root (`/data/le1-ntp/` and `/system/bin/le1-boot.sh`), then runs a live NMEA test
+(`gps.py 18`) and `gpstime.sh`. Re-run it after any change to those files.
+
+Quick manual test once deployed:
+```bash
+ssh -p 8022 u0_a50@172.26.39.132 "su -c 'sh /data/le1-ntp/gpstime.sh 20; date'"
+```
+
+If `gps.py` prints nothing, the port-7000 NMEA stream is not live: open **YGPS**
+on the unit and tap **"Enable nmea2socket"** once (the flag persists in mnld).
+
 ## Files
 
 - `ntp/sync.py`, `ntp/sync.sh` — the NTP client
