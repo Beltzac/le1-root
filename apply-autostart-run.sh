@@ -5,7 +5,7 @@
 #   bash apply-autostart-run.sh            # wait up to 30 min, then apply
 #   WAIT=0 bash apply-autostart-run.sh     # apply immediately if online
 set -u
-H="u0_a50@100.124.251.81"
+H=${H:-u0_a50@100.124.251.81}
 P=${P:-8022}
 STAGE=${STAGE:-/data/data/com.termux/files/home/.le1-stage}
 cd "$(dirname "$0")"

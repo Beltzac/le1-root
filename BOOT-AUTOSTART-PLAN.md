@@ -135,20 +135,25 @@ ls /dev/net/tun || { mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 600 /
 ```sh
 #!/system/bin/sh
 B=/data/le1-tailscale
-# Android's netd keeps the default route out of the main table; tailscaled's
-# marked sockets land there -> "network is unreachable". Mirror the active
-# network's default into main (idempotent; redone every supervisor loop).
-GW=$(getprop dhcp.wlan0.gateway 2>/dev/null)
-[ -n "$GW" ] || GW=$(ip route show table 1004 2>/dev/null | grep '^default' | cut -d' ' -f3)
-[ -n "$GW" ] && ip route replace default via "$GW" dev wlan0 table main
+# netd routes tailscaled's bypass mark (0x80000) to `main`, which has an explicit
+# `unreachable default`. Re-point the mark at the active interface table.
+# (Verified fix -- mirroring a default into main does NOT work.)
+IFACE=$(ip route show table all 2>/dev/null | grep -m1 '^default via' | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2)
+[ -n "$IFACE" ] || IFACE=wlan0
+ip rule del fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+ip rule add fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
 # 1.102.x only: give Go a resolver (1.103+ uses /dev/socket/dnsproxyd instead)
 D=$(getprop net.dns1 2>/dev/null)
-[ -n "$D" ] && printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf 2>/dev/null
+if [ -n "$D" ]; then
+    mount -o rw,remount /system 2>/dev/null
+    printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf 2>/dev/null
+    mount -o ro,remount /system 2>/dev/null
+fi
 "$B/bin/tailscaled" \
   --statedir=/data/misc/le1-tailscale \
   --socket="$B/tailscaled.sock" \
   --tun=tailscale0 --port=0 \
-  --netfilter-mode=off --no-logs-no-support \
+  --no-logs-no-support \
   >>/data/misc/le1-time/tailscaled.log 2>&1 &
 sleep 3
 "$B/bin/tailscale" --socket="$B/tailscaled.sock" up \

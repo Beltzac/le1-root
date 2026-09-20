@@ -260,8 +260,14 @@ write-up: `TAILSCALED-ROOT.md`.
 - RTC is dead -> boot clock is 2007 -> TLS fails. `toybox date` has **no `-s`/`-D`**;
   the working form is `date -u "@<epoch>"`. No busybox on the device.
 
-### Root tailscaled — two Android blockers (see TAILSCALED-ROOT.md)
+### Root tailscaled — SOLVED (see TAILSCALED-ROOT.md)
 1. DNS: no `/etc/resolv.conf`; Go resolver -> `127.0.0.1:53` refused.
    tailscale >= 1.103 uses `dnsproxyd` (verified: 1.103.229 has it, 1.102.4 does not).
-2. Route: Android bypass mark `0x80000` -> `main` table -> no default -> unreachable.
-   Fix: mirror the active network default into `main` on every supervisor loop.
+2. Route: Android bypass mark `0x80000` -> `main` table, which has an explicit
+   `unreachable default` -> unreachable. Fix: `ip rule add fwmark 0x80000/0xff0000
+   lookup <iface> pref 5200` (mirroring a default into main does NOT work).
+Result: node `le1-1` / 100.122.21.101 up, direct peer ping to the phone in 63 ms,
+phone ping to 100.122.21.101 2/2.
+Also: tailscale 1.103 removed `--netfilter-mode`; `--accept-dns` is a `tailscale up`
+flag, not a daemon flag. And `date -u "@epoch"` sets the clock (toybox has no `-s`) --
+but never derive the epoch from the device's own `date +%s` while its clock is wrong.

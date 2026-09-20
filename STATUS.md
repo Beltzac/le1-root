@@ -21,19 +21,23 @@ Applied the SSH half of `BOOT-AUTOSTART-PLAN.md` on the device.
   `/data/le1-ssh/start-sshd.sh` (which guards on port 8022 so Termux's sshd can't
   double-bind). Installed; **active next boot** (starts before Termux:Boot, so it
   wins 8022).
-- **root `tailscaled` still not working** — diagnosed, see **`TAILSCALED-ROOT.md`**.
-  Two Android-isms: (1) **DNS** — no `/etc/resolv.conf`, Go resolver falls back to
-  `127.0.0.1:53`; fixed natively in tailscale **>= 1.103** (`dnsproxyd`), and our
-  1.102.4 lacks it (`strings tailscaled | grep -c dnsproxyd` -> 0, unstable 1.103.229
-  -> 4). (2) **Route** — the control socket's Android bypass mark `0x80000` is sent to
-  the **`main`** table, which has **no default route** -> `network is unreachable`.
-  Fix = use tailscale >= 1.103 + mirror the active network's default route into
-  `main` on every supervisor loop (`ip route replace default via $GW dev wlan0 table main`).
-  Until then `ensure_tailscale` stays disabled and the Tailscale **app's** always-on
-  VPN remains the transport. The apply clears `always_on_vpn` **only** if root
-  tailscaled actually gets an address — so a failed auth can never strand the unit.
-- Reference: `WayneShao/KernelSU-Tailscaled` issue #1 and `anasfanani/magisk-tailscaled`
-  hit exactly the same wall (the module ships no workaround).
+- **root `tailscaled` WORKS** (2026-09-20) — node **`le1-1` / `100.122.21.101`**, direct
+  peer ping to the phone (`tailscale ping moto-g54-5g` -> pong via 179.68.107.16:3118
+  in 63 ms; phone -> 100.122.21.101 2/2). Recipe (full write-up in `TAILSCALED-ROOT.md`):
+  1. tailscale **1.103.229** (unstable) — 1.102.4 has no `dnsproxyd` DNS support
+     (`strings tailscaled | grep -c dnsproxyd`: 1.102.4 -> 0, 1.103.229 -> 4).
+  2. **`ip rule add fwmark 0x80000/0xff0000 lookup <iface> pref 5200`** — netd sends
+     the tailscaled bypass mark to `main`, which has an explicit `unreachable
+     default`; mirroring a default route into `main` does **not** work. Re-applied
+     by the supervisor every loop (netd rebuilds the rules on network change).
+  3. correct clock (`date -u "@<epoch>"`; toybox has no `-s`), daemon flags **without**
+     `--netfilter-mode` (removed in 1.103) and no `--accept-dns` (a `tailscale up` flag).
+  Still open: the root daemon registered a **new** node (`le1-1`); the app's node
+  `le1` (100.124.251.81) still exists. Decision needed. `ensure_tailscale` is enabled
+  again in the supervisor. Keep the app's always-on VPN until a full reboot proves the
+  root daemon comes up on its own (the boot clock depends on the supervisor cache).
+- References: `WayneShao/KernelSU-Tailscaled` issue #1 and `anasfanani/magisk-tailscaled`
+  hit the same wall (the module ships no workaround).
 - Runner `apply-autostart-run.sh` now stages in the Termux home (`u0_a50` cannot
   write `/data/local/tmp`).
 

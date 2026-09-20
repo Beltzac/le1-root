@@ -1,7 +1,10 @@
 # LE1 — root `tailscaled` on Android: research, theory and plan
 
-Status: **researched + theorised (2026-09-20). Not yet working. Two independent
-Android-isms block it; both have concrete fixes.**
+Status: **WORKING (2026-09-20).** Root `tailscaled` is up on the LE1 as node
+`le1-1` / `100.122.21.101`, with direct peer connectivity (tailscale ping from the
+node to the phone: pong via 179.68.107.16:3118 in 63 ms; phone ping to
+100.122.21.101: 2/2). The working recipe is: **tailscale >= 1.103** for DNS + one
+**`ip rule`** for the Android bypass mark + a correct clock.
 
 Goal: run the official static `tailscaled` as **root** on the LE1 (LeTV/MT6580,
 Android 8.1) so Tailscale comes up at boot with **no app and no Termux**, keeping
@@ -17,7 +20,7 @@ Two separate problems, both caused by Android (not by Tailscale or our setup):
 | # | Symptom in `tailscaled.log` | Cause | Fix |
 |---|---|---|---|
 | 1 | `failed to resolve "controlplane.tailscale.com"` / `no DNS fallback candidates remain` | Android has **no `/etc/resolv.conf`**; Go's pure resolver falls back to `127.0.0.1:53` -> `connection refused` | use tailscale **>= 1.103** (androiddns/queries `/dev/socket/dnsproxyd`), or write `/etc/resolv.conf` |
-| 2 | `dial tcp <ip>:443: connect: network is unreachable` | Android policy routing sends sockets with the **bypass mark `0x80000`** to the **`main`** table, which has **no default route** (the default lives in the per-network table) | mirror the active network's default route into `main`, re-applied on every network change |
+| 2 | `dial tcp <ip>:443: connect: network is unreachable` | Android policy routing sends sockets with the **bypass mark `0x80000`** to the **`main`** table, which has an explicit **`unreachable default`** | add an `ip rule` with priority **< 5210** sending `fwmark 0x80000/0xff0000` to the **interface's own table**, re-applied on every network change |
 
 Neither is fixed by `--netfilter-mode=off` (tried on the LE1 and on the reference
 module issue).
@@ -126,33 +129,54 @@ Keep `--accept-dns=false` so tailscaled never fights Android's own DNS.
 Fallback if we must stay on 1.102.4: the supervisor writes a live
 `/etc/resolv.conf` (see Step 2).
 
-### Step 2 — Route: mirror the active default into `main`
-The supervisor must (re)do this on **every** boot and **every** network change
-(the tables are rebuilt from scratch and our route is wiped):
+### Step 2 — Route: re-point the bypass mark (this is the real fix)
+
+The observed LE1 rules:
+```
+5210: from all fwmark 0x80000/0xff0000 lookup main      <- main has "unreachable default"
+5230: from all fwmark 0x80000/0xff0000 lookup default
+5250: from all fwmark 0x80000/0xff0000 unreachable
+```
+So a marked socket is dead-ended. Add our own rule with a **lower** priority number
+so it wins, pointing at the interface table (which holds the real default):
 
 ```sh
-# current default network + gateway (LE1 has no awk in /system/bin -- use cut)
-GW=$(getprop dhcp.wlan0.gateway 2>/dev/null)
-[ -n "$GW" ] || GW=$(ip route show table 1004 2>/dev/null | grep '^default' | cut -d' ' -f3)
-ip route replace default via "$GW" dev wlan0 table main
+# LE1 has no awk in /system/bin -- grep/cut only
+IFACE=$(ip route show table all 2>/dev/null | grep -m1 '^default via' | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2)
+[ -n "$IFACE" ] || IFACE=wlan0
+ip rule del fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+ip rule add fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
 ```
 
-`ip route replace` is idempotent. The 60 s supervisor loop is a good enough
-cadence; optionally also trigger on `net.dns1`/`dhcp.wlan0.gateway` change.
+Verified on device: `ip route get 8.8.8.8 mark 0x80000` ->
+`8.8.8.8 via 172.26.39.235 dev wlan0 src 172.26.39.132 mark 0x80000 uid 0`.
+
+`del`+`add` is idempotent. netd rebuilds the rules on network changes, so the
+supervisor must redo this **every loop** (60 s is fine) and on boot.
+
+NOTE: mirroring the default into `main` (`ip route replace default ... table main`)
+was tried and **does not work** -- netd installs an explicit `unreachable default`
+there. Use the rule above.
 
 DNS fallback (only needed on 1.102.x), also refreshed each loop:
 ```sh
-D=$(getprop net.dns1); [ -n "$D" ] && printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf
+D=$(getprop net.dns1)
+[ -n "$D" ] && { mount -o rw,remount /system; printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf; mount -o ro,remount /system; }
 ```
-(`/etc` -> `/system/etc`; needs `/system` rw once, then it persists.)
+(`/etc` -> `/system/etc`, read-only by default; needs a remount.)
 
 ### Step 3 — daemon flags
 ```sh
 tailscaled --statedir=/data/misc/le1-tailscale \
   --socket=/data/le1-tailscale/tailscaled.sock \
-  --tun=tailscale0 --port=0 --netfilter-mode=off --no-logs-no-support
+  --tun=tailscale0 --port=0 --no-logs-no-support
 ```
-`--netfilter-mode=off` keeps Tailscale from editing Android's iptables.
+**Gotchas (hit on the LE1):**
+- **1.103 removed `--netfilter-mode`** — passing it is a hard startup error
+  (`flag provided but not defined`). 1.102.x accepted it.
+- `--accept-dns` is a **`tailscale up`** flag, never a `tailscaled` flag.
+- The auth key must be passed as `--authkey=`; a stale/one-time key silently
+  falls back to an interactive login URL.
 
 ### Step 4 — login and handover
 ```sh
@@ -205,3 +229,51 @@ curl -s -o /dev/null -w '%{http_code}\n' https://controlplane.tailscale.com/key
 - tailscale/tailscale#18695 (configurable marks, open) — https://github.com/tailscale/tailscale/pull/18695
 - WayneShao/KernelSU-Tailscaled#1 (exact diagnosis) — https://github.com/WayneShao/KernelSU-Tailscaled/issues/1
 - anasfanani/Magisk-Tailscaled (reference module) — https://github.com/anasfanani/magisk-tailscaled
+
+---
+
+## Verified working recipe (LE1, 2026-09-20)
+
+```sh
+# 0. clock must be right or every TLS handshake fails ("certificate ... not yet
+#    valid"). /system/bin/date is toybox: `date -u "@<epoch>"` (no -s).
+#    WARNING: never derive the epoch from the device's own `date +%s` while its
+#    clock is wrong -- that re-sets it to 2007. Take the epoch from a sane host.
+date -u "@$(date +%s)"            # epoch supplied from outside
+
+# 1. route the Android bypass mark out the real interface table
+IFACE=$(ip route show table all | grep -m1 '^default via' | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2)
+[ -n "$IFACE" ] || IFACE=wlan0
+ip rule del fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+ip rule add fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+
+# 2. daemon (1.103.229 arm; no --netfilter-mode, no --accept-dns)
+/data/le1-tailscale/bin/tailscaled --statedir=/data/misc/le1-tailscale \
+  --socket=/data/le1-tailscale/tailscaled.sock \
+  --tun=tailscale0 --port=0 --no-logs-no-support &
+
+# 3. login
+tailscale --socket=/data/le1-tailscale/tailscaled.sock up \
+  --authkey="$(cat /data/le1-tailscale/authkey)" \
+  --accept-dns=false --accept-routes=false --hostname=le1
+```
+
+Observed result:
+```
+ip route get 8.8.8.8 mark 0x80000 -> via 172.26.39.235 dev wlan0  (ok)
+ip addr show tailscale0           -> inet 100.122.21.101/32
+tailscale status                  -> sees the whole tailnet (moto-g54-5g idle)
+tailscale ping moto-g54-5g        -> pong via 179.68.107.16:3118 in 63ms
+phone -> ping 100.122.21.101      -> 2/2
+```
+
+### Open items
+- **Node identity**: the root daemon registered a *new* node (`le1-1` /
+  100.122.21.101) because the app's state was not reused; the app's node `le1`
+  (100.124.251.81) still exists. Decide: keep `le1-1` and drop the app, or copy
+  the app's `tailscaled.state` to reuse the original IP.
+- **Boot clock**: the supervisor restores the clock from `/data/misc/le1-time/last`;
+  a dead RTC means a wrong clock at boot until that runs. Keep the app's always-on
+  VPN until a full reboot proves root `tailscaled` comes up on its own.
+- **`--accept-dns=false`** means no MagicDNS; tailnet names are not resolvable on
+  the device (IPs work).

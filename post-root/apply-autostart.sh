@@ -138,19 +138,28 @@ cat > "$TSDIR/start.sh" <<'EOF'
 B=/data/le1-tailscale
 S=/data/misc/le1-tailscale
 [ -c /dev/net/tun ] || { mkdir -p /dev/net; mknod /dev/net/tun c 10 200; chmod 600 /dev/net/tun; }
-# Android's netd keeps the default route OUT of the main table, but tailscaled's
-# bypass-marked (0x80000) control/derp sockets are steered there -> "network is
-# unreachable". Mirror the active network's default into main (idempotent; also
-# re-done every supervisor loop because the tables are rebuilt on net change).
-GW=$(getprop dhcp.wlan0.gateway 2>/dev/null)
-[ -n "$GW" ] || GW=$(ip route show table 1004 2>/dev/null | grep '^default' | cut -d' ' -f3)
-[ -n "$GW" ] && ip route replace default via "$GW" dev wlan0 table main 2>/dev/null
+# Android's netd routes the tailscaled bypass mark (0x80000) to the `main` table,
+# which has an explicit `unreachable default` -> control/derp dials fail with
+# "network is unreachable". Give that mark a higher-priority rule pointing at the
+# active interface's own table (which holds the real default). Idempotent; re-added
+# every call because netd rebuilds the rules/tables on network changes.
+# (Confirmed on this unit: netd has "5210: from all fwmark 0x80000/0xff0000 lookup main".)
+IFACE=$(ip route show table all 2>/dev/null | grep -m1 '^default via' | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2)
+[ -n "$IFACE" ] || IFACE=wlan0
+ip rule del fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+ip rule add fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
 # Only needed for tailscale 1.102.x, which has no dnsproxyd support (1.103+ does).
 D=$(getprop net.dns1 2>/dev/null)
-[ -n "$D" ] && printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf 2>/dev/null
+if [ -n "$D" ]; then
+    mount -o rw,remount /system 2>/dev/null
+    printf 'nameserver %s\n' "$D" > /system/etc/resolv.conf 2>/dev/null
+    mount -o ro,remount /system 2>/dev/null
+fi
 pidof tailscaled >/dev/null 2>&1 && exit 0
+# NOTE: tailscale 1.103 removed --netfilter-mode (router auto-detects); passing
+# it is a hard startup error. 1.102.x accepted it.
 "$B/bin/tailscaled" --statedir="$S" --socket="$B/tailscaled.sock" \
-    --tun=tailscale0 --port=0 --netfilter-mode=off --no-logs-no-support \
+    --tun=tailscale0 --port=0 --no-logs-no-support \
     >>"$B/tailscaled.log" 2>&1 &
 i=0
 while [ $i -lt 30 ]; do [ -S "$B/tailscaled.sock" ] && break; sleep 1; i=$((i+1)); done
