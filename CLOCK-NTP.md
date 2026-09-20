@@ -89,12 +89,18 @@ The carhome log proves the same, and the successful call after the fix:
    - `sync.sh` — runs it with Termux's `python3`, and if the clock is off by >3 s
      calls `date -u "@<epoch>"`; also refreshes the cache
      `/data/misc/le1-time/last`.
-3. **Supervisor integration**: `ntp_sync` runs at startup and at most every 30 min
-   (no-ops until the network is up, so the loop retries for free). `restore_clock`
-   keeps re-asserting the cached time every 60 s as a floor.
+3. **Supervisor integration**: `clock_sync` runs at startup and at most every
+   30 min (no-ops until a source answers, so the loop retries for free).
+4. **GPS fallback (offline, no internet needed)**: the MTK GPS exposes NMEA on
+   `127.0.0.1:7000` (mnld `nmea2socket`, on by default on this platform; YGPS can
+   re-enable it).
+   - `gps.py` — minimal NMEA reader (python3); takes the UTC epoch from the first
+     valid `RMC` (status A, has date) or `ZDA` sentence.
+   - `gpstime.sh` — sets the clock from it and refreshes the cache.
+   `clock_sync` tries NTP first, then GPS (GPS rate-limited to every 5 min).
 
-Boot order: `restore_clock` (cache, approximate) -> `ntp_sync` (accurate) ->
-`enforce_autotime` (keep auto_time=0).
+Boot order: `restore_clock` (cache, approximate) -> `clock_sync` (NTP, then GPS)
+-> `enforce_autotime` (keep auto_time=0).
 
 ## Verification
 
@@ -127,9 +133,15 @@ $ tail files/diag.log
 ## Files
 
 - `ntp/sync.py`, `ntp/sync.sh` — the NTP client
-- `boot/le1-boot.sh` — `ntp_sync`, `restore_clock`, `enforce_autotime`
+- `ntp/gps.py`, `ntp/gpstime.sh` — the GPS (NMEA) clock fallback
+- `boot/le1-boot.sh` — `clock_sync`, `restore_clock`, `enforce_autotime`
 - `post-root/apply-autostart.sh` — installs `/data/le1-ntp/`
 - `/data/le1-ntp/` on the device
+
+> Status of the GPS layer: implemented 2026-09-20, **not yet tested on the device**
+> (the unit was powered off when it landed). Next time it is on, deploy the files
+> and run `/data/le1-ntp/gpstime.sh 20` to confirm the port-7000 NMEA stream yields
+> a fix.
 
 ## Related
 
