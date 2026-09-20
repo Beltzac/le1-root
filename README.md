@@ -135,6 +135,8 @@ root shell.
 - `STATUS.md` — earlier session log
 - `TAILSCALED-ROOT.md` — running `tailscaled` as root on Android: the netd DNS/route
   blockers and the fix plan (tailscale >= 1.103 + main-table default route)
+- `CLOCK-NTP.md` — wrong clock / dead RTC / broken Android NTP: why TLS failed and
+  the own-NTP-client fix
 - `BOOT-AUTOSTART-PLAN.md` — app-free boot autostart (SSH done; Tailscale per the above)
 
 ## Next steps
