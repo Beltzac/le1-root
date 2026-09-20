@@ -109,9 +109,25 @@ ensure_tailscale() {
     if pidof tailscaled >/dev/null 2>&1; then log "tailscaled (re)started"; else log "tailscaled did not start"; fi
 }
 
+# Accurate clock from our own NTP client. Android's built-in NTP does not work on
+# this vendor ROM (and auto_time=1 re-syncs the dead RTC and reverts the clock).
+# Uses Termux's python3 (present on this unit). Runs at startup and at most every
+# 30 min; no-ops until the network is up, so the loop retries it for free.
+NTP_LAST=$D/ntp.last
+ntp_sync() {
+    [ -x /data/le1-ntp/sync.sh ] || return 0
+    now=$(date +%s 2>/dev/null); num "$now" || now=0
+    last=$(cat "$NTP_LAST" 2>/dev/null | tr -d ' \t\r\n'); num "$last" || last=0
+    if [ "$last" -gt 0 ] && [ $((now - last)) -lt 1800 ]; then return 0; fi
+    if /data/le1-ntp/sync.sh >>"$LOG" 2>&1; then
+        printf '%s' "$(date +%s)" > "$NTP_LAST" 2>/dev/null
+    fi
+}
+
 # --------------------------------------------------------------------------
 log "le1-boot start (pid $$, hook=$HOOK)"
 restore_clock
+ntp_sync
 start_daemon
 ensure_sshd
 ensure_tailscale
@@ -123,6 +139,7 @@ while :; do
     # (~2007) a few minutes after boot, which kills every TLS handshake. Re-assert
     # the cached time every loop so tailscaled keeps working.
     restore_clock
+    ntp_sync
     start_daemon
     ensure_sshd
     ensure_tailscale

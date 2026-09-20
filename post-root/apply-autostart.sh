@@ -175,6 +175,51 @@ EOF
 chmod 755 "$TSDIR/start.sh"
 log "tailscale wrapper written"
 
+# ------------------------------------------------------------------ 4b. ntp
+# Android's built-in NTP does not work on this vendor ROM, and auto_time=1
+# re-syncs the dead RTC and reverts the clock (killing every TLS handshake).
+# Ship our own tiny NTP client (uses Termux's python3) for the supervisor.
+mkdir -p /data/le1-ntp
+cat > /data/le1-ntp/sync.py <<'PYEOF'
+#!/usr/bin/env python3
+# Minimal NTP client: prints the current UTC epoch, or exits non-zero.
+import socket, struct, sys
+SERVERS = ["a.st1.ntp.br", "pool.ntp.org", "time.google.com", "200.160.7.186", "162.159.200.1"]
+PKT = b'\x1b' + 47 * b'\0'
+for srv in SERVERS:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(4)
+        s.sendto(PKT, (srv, 123))
+        d, _ = s.recvfrom(1024)
+        sec = struct.unpack('!I', d[40:44])[0] - 2208988800
+        if sec > 1600000000:
+            print(sec)
+            sys.exit(0)
+    except Exception:
+        continue
+sys.exit(1)
+PYEOF
+cat > /data/le1-ntp/sync.sh <<'SHEOF'
+#!/system/bin/sh
+PREFIX=/data/data/com.termux/files/usr
+BIN=/data/le1-ntp
+[ -x "$PREFIX/bin/python3" ] || { echo "ntp: no python"; exit 1; }
+E=$(LD_LIBRARY_PATH="$PREFIX/lib:/system/lib" "$PREFIX/bin/python3" "$BIN/sync.py" 2>/dev/null)
+case "$E" in ''|*[!0-9]*) echo "ntp: no answer"; exit 1;; esac
+[ "$E" -ge 1600000000 ] || { echo "ntp: bogus $E"; exit 1; }
+NOW=$(date +%s)
+DIFF=$((E - NOW)); [ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
+if [ "$DIFF" -gt 3 ]; then
+    date -u "@$E" && echo "clock set from ntp @$E (was off ${DIFF}s)"
+else
+    echo "clock ok (off ${DIFF}s)"
+fi
+printf '%s\n' "$E" > /data/misc/le1-time/last 2>/dev/null
+SHEOF
+chmod 755 /data/le1-ntp/sync.sh /data/le1-ntp/sync.py
+log "ntp sync installed"
+
 # NOTE: always_on_vpn is cleared only AFTER root tailscaled is verified up with
 # an address (see "run + verify" below). That way a failed/expired auth can never
 # cut the unit's only remote path (it has no LAN route from us).

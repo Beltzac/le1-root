@@ -23,6 +23,13 @@ needs `curl -k`.
 ## 1. Clock fix (in order of preference)
 
 ### 1a. Android-native auto-time (try first — 5 min, no custom scripts)
+
+> **2026-09-20: Android's NTP does NOT work on this ROM.** NTP itself is fine
+> (pool.ntp.org, a.st1.ntp.br, time.google.com all answer from the device), but
+> Android never applies it, and `auto_time=1` makes the system re-sync the dead
+> RTC (~2007) about a minute after boot -> every TLS handshake fails. Real fix:
+> our own NTP client at `/data/le1-ntp/{sync.py,sync.sh}` (Termux python3), run by
+> the boot supervisor, plus `auto_time=0`. See `STATUS.md` / `TAILSCALED-ROOT.md`.
 ```bash
 su
 settings put global auto_time 1

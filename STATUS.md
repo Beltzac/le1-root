@@ -43,6 +43,15 @@ Applied the SSH half of `BOOT-AUTOSTART-PLAN.md` on the device.
   (2) Android reverts the clock to the dead-RTC default (~2007) a few minutes after
   boot, so `restore_clock` now re-runs every supervisor loop and `auto_time` was set
   to 0. Codes committed.
+- **Clock / NTP (2026-09-20).** Android's built-in NTP does **not** work on this
+  vendor ROM, and `auto_time=1` re-syncs the dead RTC (~2007) and reverts the clock
+  within ~a minute, which makes every TLS handshake fail (`Unacceptable certificate`
+  in the carhome diag.log when calling OpenRouter). NTP itself is fine: a Python
+  query reaches pool.ntp.org / a.st1.ntp.br / time.google.com. Fix shipped:
+  `/data/le1-ntp/{sync.py,sync.sh}` (tiny NTP client using Termux's python3) run by
+  the supervisor at startup and every 30 min; `enforce_autotime` pins `auto_time=0`.
+  Verified: clock accurate to 1 s, and the app's OpenRouter call returned `REPLY`
+  with no cert/DNS error.
 - References: `WayneShao/KernelSU-Tailscaled` issue #1 and `anasfanani/magisk-tailscaled`
   hit the same wall (the module ships no workaround).
 - Runner `apply-autostart-run.sh` now stages in the Termux home (`u0_a50` cannot
