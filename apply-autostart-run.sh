@@ -7,7 +7,7 @@
 set -u
 H="u0_a50@100.124.251.81"
 P=${P:-8022}
-STAGE=/data/local/tmp/le1-stage
+STAGE=${STAGE:-/data/data/com.termux/files/home/.le1-stage}
 cd "$(dirname "$0")"
 
 SSH() { timeout 30 ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -p "$P" "$H" "$@"; }
