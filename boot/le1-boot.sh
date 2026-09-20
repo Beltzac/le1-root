@@ -87,12 +87,17 @@ enforce_autotime() {
 # Wrappers live in /data/le1-ssh and /data/le1-tailscale; each backgrounds its own
 # daemon. The supervisor only checks liveness and restarts. Never uses su.
 ensure_sshd() {
-    pidof dropbear >/dev/null 2>&1 && return 0
+    pidof sshd >/dev/null 2>&1 && return 0
     [ -x /data/le1-ssh/start-sshd.sh ] || return 0
     /data/le1-ssh/start-sshd.sh >/dev/null 2>&1 &
     sleep 1
-    if pidof dropbear >/dev/null 2>&1; then log "sshd (re)started"; else log "sshd did not start"; fi
+    if pidof sshd >/dev/null 2>&1; then log "sshd (re)started"; else log "sshd did not start"; fi
 }
+
+# Not auto-started: root tailscaled cannot reach the controlplane on this ROM —
+# Android's netd gives root no DNS/route, so it stays "logged out". The Tailscale
+# *app* (always-on VPN) already provides the transport, so we keep that instead.
+# Left here for a future netd fix (ip rule / fwmark).
 
 ensure_tailscale() {
     pidof tailscaled >/dev/null 2>&1 && return 0
@@ -107,14 +112,14 @@ log "le1-boot start (pid $$, hook=$HOOK)"
 restore_clock
 start_daemon
 ensure_sshd
-ensure_tailscale
+# ensure_tailscale  # disabled: root tailscaled has no netd DNS/route (see above)
 
 # Supervisor loop. Runs forever. 60s cadence is cheap.
 while :; do
     sleep "$LOOP_SECS"
     start_daemon
     ensure_sshd
-    ensure_tailscale
+    # ensure_tailscale  # disabled: root tailscaled has no netd DNS/route
     enforce_autotime
     save_clock
 done

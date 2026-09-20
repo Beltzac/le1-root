@@ -51,11 +51,14 @@ mkdir -p "$TSS"
 log "binaries installed"
 
 # ------------------------------------------------------------------ 2. ssh keys
-export LD_LIBRARY_PATH="$SSHDIR/lib"
-if [ ! -f "$SSHDIR/host_ed25519" ]; then
-  "$SSHDIR/dropbearmulti" dropbearkey -t ed25519 -f "$SSHDIR/host_ed25519" >>"$LOG" 2>&1 \
-    && log "host key generated" || log "WARN: dropbearkey failed"
+U=/data/data/com.termux/files/usr
+if [ ! -f "$SSHDIR/ssh_host_ed25519_key" ]; then
+  LD_LIBRARY_PATH="$U/lib" "$U/bin/ssh-keygen" -t ed25519 -N '' \
+      -f "$SSHDIR/ssh_host_ed25519_key" >>"$LOG" 2>&1 \
+    && log "openssh host key generated" || log "WARN: ssh-keygen failed"
 fi
+chmod 600 "$SSHDIR/ssh_host_ed25519_key" 2>/dev/null
+log "host key ready"
 
 AK="$SSHDIR/authorized_keys"
 : > "$AK"
@@ -81,24 +84,32 @@ fi
 [ -n "$HOME_DIR" ] || HOME_DIR=/data/le1-ssh
 
 # ------------------------------------------------------------------ 3. ssh wrapper
+# OpenSSH sshd (from the Termux prefix, run as root) — proven on this unit.
+# dropbear v2026 was rejected here: it silently refused our valid ed25519 key.
+cat > "$SSHDIR/sshd_config" <<'EOF'
+Port 8022
+ListenAddress 0.0.0.0
+HostKey /data/le1-ssh/ssh_host_ed25519_key
+AuthorizedKeysFile /data/le1-ssh/authorized_keys
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+PidFile /data/le1-ssh/sshd.pid
+StrictModes no
+EOF
+chmod 600 "$SSHDIR/sshd_config"
 cat > "$SSHDIR/start-sshd.sh" <<'EOF'
 #!/system/bin/sh
 D=/data/le1-ssh
-export LD_LIBRARY_PATH="$D/lib"
-PW=/system/etc/passwd
-H=$(awk -F: '$1=="root"{print $6}' "$PW" 2>/dev/null)
-[ -n "$H" ] || H=/data/le1-ssh
-for d in "$H" /; do
-  mkdir -p "$d/.ssh" 2>/dev/null
-  cp -f "$D/authorized_keys" "$d/.ssh/authorized_keys" 2>/dev/null
-  chmod 700 "$d/.ssh" 2>/dev/null
-  chmod 600 "$d/.ssh/authorized_keys" 2>/dev/null
-done
-exec "$D/dropbearmulti" dropbear -F -s -r "$D/host_ed25519" \
-     -p 0.0.0.0:8022 -P "$D/dropbear.pid" >>"$D/sshd.log" 2>&1
+U=/data/data/com.termux/files/usr
+export LD_LIBRARY_PATH="$U/lib"
+# if something already holds 8022 (e.g. Termux sshd), we are covered
+netstat -ltn 2>/dev/null | grep -q ':8022 ' && exit 0
+exec "$U/bin/sshd" -D -e -f "$D/sshd_config" >>"$D/sshd.log" 2>&1
 EOF
 chmod 755 "$SSHDIR/start-sshd.sh"
-log "ssh wrapper written"
+log "ssh wrapper written (openssh sshd)"
 
 # preliminary placement of keys at root home + /
 for d in "$HOME_DIR" /; do
