@@ -113,21 +113,33 @@ ensure_tailscale() {
 # this vendor ROM (and auto_time=1 re-syncs the dead RTC and reverts the clock).
 # Uses Termux's python3 (present on this unit). Runs at startup and at most every
 # 30 min; no-ops until the network is up, so the loop retries it for free.
-NTP_LAST=$D/ntp.last
-ntp_sync() {
-    [ -x /data/le1-ntp/sync.sh ] || return 0
+CLOCK_LAST=$D/clock.last
+clock_sync() {
     now=$(date +%s 2>/dev/null); num "$now" || now=0
-    last=$(cat "$NTP_LAST" 2>/dev/null | tr -d ' \t\r\n'); num "$last" || last=0
+    last=$(cat "$CLOCK_LAST" 2>/dev/null | tr -d ' \t\r\n'); num "$last" || last=0
     if [ "$last" -gt 0 ] && [ $((now - last)) -lt 1800 ]; then return 0; fi
-    if /data/le1-ntp/sync.sh >>"$LOG" 2>&1; then
-        printf '%s' "$(date +%s)" > "$NTP_LAST" 2>/dev/null
+    # 1. NTP (needs network)
+    if [ -x /data/le1-ntp/sync.sh ] && /data/le1-ntp/sync.sh >>"$LOG" 2>&1; then
+        printf '%s' "$now" > "$CLOCK_LAST" 2>/dev/null
+        return 0
     fi
+    # 2. GPS fallback (offline; needs a sky fix). Don't hammer it: every 5 min.
+    GPS_LAST=$D/gps.last
+    gl=$(cat "$GPS_LAST" 2>/dev/null | tr -d ' \t\r\n'); num "$gl" || gl=0
+    if [ $((now - gl)) -ge 300 ] && [ -x /data/le1-ntp/gpstime.sh ]; then
+        printf '%s' "$now" > "$GPS_LAST" 2>/dev/null
+        if /data/le1-ntp/gpstime.sh >>"$LOG" 2>&1; then
+            printf '%s' "$now" > "$CLOCK_LAST" 2>/dev/null
+            return 0
+        fi
+    fi
+    return 1
 }
 
 # --------------------------------------------------------------------------
 log "le1-boot start (pid $$, hook=$HOOK)"
 restore_clock
-ntp_sync
+clock_sync
 start_daemon
 ensure_sshd
 ensure_tailscale
@@ -139,7 +151,7 @@ while :; do
     # (~2007) a few minutes after boot, which kills every TLS handshake. Re-assert
     # the cached time every loop so tailscaled keeps working.
     restore_clock
-    ntp_sync
+    clock_sync
     start_daemon
     ensure_sshd
     ensure_tailscale

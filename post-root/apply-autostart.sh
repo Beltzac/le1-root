@@ -218,7 +218,69 @@ fi
 printf '%s\n' "$E" > /data/misc/le1-time/last 2>/dev/null
 SHEOF
 chmod 755 /data/le1-ntp/sync.sh /data/le1-ntp/sync.py
-log "ntp sync installed"
+cat > /data/le1-ntp/gps.py <<'PYEOF2'
+#!/usr/bin/env python3
+# GPS time: read NMEA from the MTK mnld nmea2socket (127.0.0.1:7000) and print
+# the UTC epoch from the first valid RMC/ZDA sentence, or exit non-zero.
+import socket, sys, time, datetime
+HOST, PORT = "127.0.0.1", 7000
+BUDGET = float(sys.argv[1]) if len(sys.argv) > 1 else 20.0
+def ep(y, mo, d, h, mi, s):
+    return int(datetime.datetime(y, mo, d, h, mi, s, tzinfo=datetime.timezone.utc).timestamp())
+def parse(l):
+    f = l.split(","); tag = f[0] if f else ""
+    try:
+        if tag.endswith("RMC"):
+            if len(f) < 10 or f[2] != "A" or "." not in f[1] or len(f[9]) < 6: return None
+            return ep(2000+int(f[9][4:6]), int(f[9][2:4]), int(f[9][0:2]), int(f[1][0:2]), int(f[1][2:4]), int(float(f[1][4:])))
+        if tag.endswith("ZDA"):
+            if len(f) < 5 or "." not in f[1]: return None
+            return ep(int(f[4]), int(f[3]), int(f[2]), int(f[1][0:2]), int(f[1][2:4]), int(float(f[1][4:])))
+    except Exception:
+        return None
+    return None
+dl = time.time() + BUDGET
+try:
+    s = socket.create_connection((HOST, PORT), timeout=5)
+except Exception as e:
+    sys.stderr.write("gps: cannot connect: %s\n" % e); sys.exit(1)
+buf = b""
+while time.time() < dl:
+    try:
+        s.settimeout(max(1.0, dl - time.time())); c = s.recv(4096)
+    except Exception:
+        break
+    if not c: break
+    buf += c
+    while b"\n" in buf:
+        raw, buf = buf.split(b"\n", 1)
+        ln = raw.decode("ascii", "ignore").strip()
+        if not ln.startswith("$"): continue
+        e = parse(ln)
+        if e and e > 1600000000:
+            print(e); sys.exit(0)
+sys.exit(1)
+PYEOF2
+cat > /data/le1-ntp/gpstime.sh <<'SHEOF2'
+#!/system/bin/sh
+PREFIX=/data/data/com.termux/files/usr
+BIN=/data/le1-ntp
+[ -x "$PREFIX/bin/python3" ] || { echo "gps: no python"; exit 1; }
+start mnld 2>/dev/null
+E=$(LD_LIBRARY_PATH="$PREFIX/lib:/system/lib" "$PREFIX/bin/python3" "$BIN/gps.py" "${1:-20}" 2>/dev/null)
+case "$E" in ''|*[!0-9]*) echo "gps: no fix"; exit 1;; esac
+[ "$E" -ge 1600000000 ] || { echo "gps: bogus $E"; exit 1; }
+NOW=$(date +%s)
+DIFF=$((E - NOW)); [ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
+if [ "$DIFF" -gt 3 ]; then
+    date -u "@$E" && echo "clock set from gps @$E (was off ${DIFF}s)"
+else
+    echo "gps ok (off ${DIFF}s)"
+fi
+printf '%s\n' "$E" > /data/misc/le1-time/last 2>/dev/null
+SHEOF2
+chmod 755 /data/le1-ntp/sync.sh /data/le1-ntp/sync.py /data/le1-ntp/gps.py /data/le1-ntp/gpstime.sh
+log "clock sync (ntp+gps) installed"
 
 # NOTE: always_on_vpn is cleared only AFTER root tailscaled is verified up with
 # an address (see "run + verify" below). That way a failed/expired auth can never
