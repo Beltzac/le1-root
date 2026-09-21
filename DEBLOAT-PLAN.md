@@ -61,7 +61,7 @@ Targets (all OEM-signed, system-UID, autostart, remote/telemetry):
 | `com.wwc2.systemupdate_apk` | System_update | OTA updater; `MOUNT_UNMOUNT_FILESYSTEMS` |
 | `com.wwc2.mcuupdate` | MCU Update | MCU firmware updater |
 | `com.wwc2.voice_assistant` | Voice Assistant | always-on mic/system proc (AISpeech AIOS) |
-| `com.mediatek.ygps` | YGPS | MTK GPS factory test app |
+| ~~`com.mediatek.ygps`~~ | YGPS | **KEEP ENABLED** -- it is the UI that toggles the GPS `nmea2socket` (127.0.0.1:7000) our offline clock fallback depends on. Do NOT disable (see `NEXT-STEPS.md` #4). |
 | `com.wwc2.panoramic` | WPanoramic | 360° surround-view camera app (only if no 360-cam hardware) |
 | `com.google.android.apps.maps` | Maps | 106 MB resident, unused in-car |
 
@@ -82,6 +82,11 @@ Targets (all OEM-signed, system-UID, autostart, remote/telemetry):
 (bird's-eye stitcher), controlled by `WMain`'s `PanoramicManager` (`sendTouchXY`,
 `sendCMDToPanoramic`, MCU). Disabling it removes the surround/parking view — restore it if
 you have 360 cameras and want it back.
+
+**Note:** the Google/GMS debloat (Play Services, Play Store, GSF, sync adapters) is
+planned separately in `NEXT-STEPS.md` #2 -- bigger risk, do it one batch per reboot
+with APK backups. Keep `com.google.android.webview`; verify `com.google.android.tts`
+before leaving it disabled.
 
 **Method (reversible, matches the repo's own POST-ROOT-PLAN):**
 1. Back up each APK to `/sdcard/le1-app-backup/` (and copy of originals already local at `~/le1-apks/`).

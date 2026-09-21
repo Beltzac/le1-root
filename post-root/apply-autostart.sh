@@ -150,7 +150,12 @@ chmod 700 "$S" "$S/logs" 2>/dev/null
 # (Confirmed on this unit: netd has "5210: from all fwmark 0x80000/0xff0000 lookup main".)
 IFACE=$(ip route show table all 2>/dev/null | grep -m1 '^default via' | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2)
 [ -n "$IFACE" ] || IFACE=wlan0
-ip rule del fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+# Drop EVERY stale copy of our rule first: they accumulate when the detected
+# interface/table changes (e.g. the app VPN comes and goes), and a leftover rule
+# pointing at a table that no longer has a default breaks tailscaled's traffic.
+ip rule show 2>/dev/null | grep '^5200:' | while read -r a b c d e f tbl; do
+    [ -n "$tbl" ] && ip rule del fwmark 0x80000/0xff0000 lookup "$tbl" pref 5200 2>/dev/null
+done
 ip rule add fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
 # Only needed for tailscale 1.102.x, which has no dnsproxyd support (1.103+ does).
 D=$(getprop net.dns1 2>/dev/null)

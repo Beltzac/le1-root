@@ -140,7 +140,10 @@ B=/data/le1-tailscale
 # (Verified fix -- mirroring a default into main does NOT work.)
 IFACE=$(ip route show table all 2>/dev/null | grep -m1 '^default via' | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2)
 [ -n "$IFACE" ] || IFACE=wlan0
-ip rule del fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+# drop every stale copy at pref 5200 (they accumulate when the table changes)
+ip rule show 2>/dev/null | grep '^5200:' | while read -r a b c d e f tbl; do
+    [ -n "$tbl" ] && ip rule del fwmark 0x80000/0xff0000 lookup "$tbl" pref 5200 2>/dev/null
+done
 ip rule add fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
 # 1.102.x only: give Go a resolver (1.103+ uses /dev/socket/dnsproxyd instead)
 D=$(getprop net.dns1 2>/dev/null)

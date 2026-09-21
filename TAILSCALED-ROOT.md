@@ -145,9 +145,14 @@ so it wins, pointing at the interface table (which holds the real default):
 # LE1 has no awk in /system/bin -- grep/cut only
 IFACE=$(ip route show table all 2>/dev/null | grep -m1 '^default via' | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2)
 [ -n "$IFACE" ] || IFACE=wlan0
-ip rule del fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
+ip rule show 2>/dev/null | grep '^5200:' | while read -r a b c d e f tbl; do
+    [ -n "$tbl" ] && ip rule del fwmark 0x80000/0xff0000 lookup "$tbl" pref 5200 2>/dev/null
+done
 ip rule add fwmark 0x80000/0xff0000 lookup "$IFACE" pref 5200 2>/dev/null
 ```
+(`del` for **every** stale copy at pref 5200 -- on the LE1 four had accumulated:
+`1006, 1010, 1016, wlan0`. A leftover rule pointing at a table without a default
+is exactly what breaks the marked control path.)
 
 Verified on device: `ip route get 8.8.8.8 mark 0x80000` ->
 `8.8.8.8 via 172.26.39.235 dev wlan0 src 172.26.39.132 mark 0x80000 uid 0`.

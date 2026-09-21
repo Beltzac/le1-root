@@ -137,6 +137,8 @@ root shell.
   blockers and the fix plan (tailscale >= 1.103 + main-table default route)
 - `CLOCK-NTP.md` — wrong clock / dead RTC / broken Android NTP: why TLS failed and
   the own-NTP-client fix
+- `NEXT-STEPS.md` — backlog: GMS debloat, ip-rule fix, remove the Microsoft HOME,
+  keep YGPS on, reboot test, Spotify/load
 - `BOOT-AUTOSTART-PLAN.md` — app-free boot autostart (SSH done; Tailscale per the above)
 
 ## Next steps
