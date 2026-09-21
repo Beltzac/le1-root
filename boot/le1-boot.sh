@@ -136,10 +136,21 @@ clock_sync() {
     return 1
 }
 
+# Keep the RTC in step with the (corrected) system clock. The vendor keeps
+# re-enabling auto_time=1, and Android re-reads the RTC; with a dead RTC that
+# reverts to 2007 and kills TLS. A correct RTC makes auto_time=1 harmless.
+rtc_write() {
+    now=$(date +%s 2>/dev/null); num "$now" || now=0
+    [ "$now" -ge 1600000000 ] || return 0
+    [ -x /data/le1-ntp/rtcset.sh ] || return 0
+    /data/le1-ntp/rtcset.sh >>"$LOG" 2>&1
+}
+
 # --------------------------------------------------------------------------
 log "le1-boot start (pid $$, hook=$HOOK)"
 restore_clock
 clock_sync
+rtc_write
 start_daemon
 ensure_sshd
 ensure_tailscale
@@ -152,6 +163,7 @@ while :; do
     # the cached time every loop so tailscaled keeps working.
     restore_clock
     clock_sync
+    rtc_write
     start_daemon
     ensure_sshd
     ensure_tailscale

@@ -327,8 +327,28 @@ else
 fi
 printf '%s\n' "$E" > /data/misc/le1-time/last 2>/dev/null
 SHEOF2
-chmod 755 /data/le1-ntp/sync.sh /data/le1-ntp/sync.py /data/le1-ntp/gps.py /data/le1-ntp/gpstime.sh
-log "clock sync (ntp+gps) installed"
+cat > /data/le1-ntp/rtcset.py <<'PYEOF3'
+#!/usr/bin/env python3
+import os, fcntl, struct, time, sys
+RTC_SET_TIME = 0x4024700a
+dev = "/dev/rtc0" if os.path.exists("/dev/rtc0") else "/dev/rtc"
+f = os.open(dev, os.O_RDWR)
+t = time.gmtime(int(time.time()))
+b = struct.pack("9i", t.tm_sec, t.tm_min, t.tm_hour, t.tm_mday, t.tm_mon-1, t.tm_year-1900, t.tm_wday, t.tm_yday, t.tm_isdst)
+fcntl.ioctl(f, RTC_SET_TIME, b)
+os.close(f)
+print("rtc set " + time.strftime("%F %T", t))
+PYEOF3
+cat > /data/le1-ntp/rtcset.sh <<'SHEOF3'
+#!/system/bin/sh
+PREFIX=/data/data/com.termux/files/usr
+E=$(date +%s 2>/dev/null)
+case "$E" in ''|*[!0-9]*) exit 1;; esac
+[ "$E" -ge 1600000000 ] || exit 1
+LD_LIBRARY_PATH="$PREFIX/lib:/system/lib" "$PREFIX/bin/python3" /data/le1-ntp/rtcset.py
+SHEOF3
+chmod 755 /data/le1-ntp/sync.sh /data/le1-ntp/sync.py /data/le1-ntp/gps.py /data/le1-ntp/gpstime.sh /data/le1-ntp/rtcset.py /data/le1-ntp/rtcset.sh
+log "clock sync (ntp+gps+rtc) installed"
 
 # NOTE: always_on_vpn is cleared only AFTER root tailscaled is verified up with
 # an address (see "run + verify" below). That way a failed/expired auth can never
