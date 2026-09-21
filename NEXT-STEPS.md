@@ -131,3 +131,35 @@ Update `DEBLOAT-PLAN.md` so future applies do not disable it again.
   14 h). Pick one; if root wins, retire the app's always-on VPN.
 - **Cleanup** -- stale `/data/le1-ssh/{dropbearmulti,host_ed25519,sshd2_config}`
   from the dropbear attempt; the `~/.le1-*.sh` helper scripts.
+
+---
+
+## 6. LE1 audio stack dead (both input and output)  [investigating, device offline]
+
+Reported 2026-09-21: **no audio at all** from the unit -- TTS (OpenRouter neural
+voice -> `AudioTrack STREAM_MUSIC`) and audio FX play nothing, and **recording**
+also fails ("audio too short"; diag: `wire-rec captured 0 bytes peak=0 rms=0`).
+The **same app works on the Moto G54**, so the carhome audio code is fine -- this
+is the LE's audio path.
+
+What is already known (OS side looks healthy, yet silent):
+- `STREAM_MUSIC` 7/15, `Muted: false`, device `AUDIO_DEVICE_OUT_SPEAKER`.
+- `ro.audio.silent=0`; HAL `android.hardware.audio@2.0-service-mediatek` running.
+- App log proves it synthesizes and plays: `wire-tts playing 64800 bytes @24000Hz`.
+- Primary output in Standby; `setForceUse(FOR_MEDIA, FORCE_NO_BT_A2DP)` seen.
+
+Suspects, in order:
+1. **MCU/amp path** -- on this WYD unit the Android output goes through the MCU
+   (`com.goodocom.gocsdk`, `/dev/ttyMT1`, `ro.mcuType=WYD_WIFI`); if the source or
+   amp is not set to Android/MEDIA, everything is silent even though Android plays.
+2. **ALSA / audio HAL** -- missing or failing `/dev/snd` devices on this build.
+3. Vendor audio routing broken by the debloat (note: `com.wwc2.voice_assistant` and
+   `com.wwc2.networks` **re-enabled themselves** after the reboot -- the vendor
+   framework `com.wwc2.main` restores components, so the disable is not sticky).
+
+Armed: `~/le1-audio-watch.sh` -> `~/le1-audio-diag.log` collects `/dev/snd`,
+audio props, HAL procs, `dmesg`/`logcat` audio errors, `/proc/asound/cards`, and an
+app-TTS probe, as soon as the unit is back online.
+
+Also re-enabled `com.google.android.tts` (the app uses the OpenRouter neural voice,
+not Android TTS, but leaving the engine off is pointless).
