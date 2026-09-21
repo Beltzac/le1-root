@@ -94,8 +94,11 @@ The carhome log proves the same, and the successful call after the fix:
 4. **GPS fallback (offline, no internet needed)**: the MTK GPS exposes NMEA on
    `127.0.0.1:7000` (mnld `nmea2socket`, on by default on this platform; YGPS can
    re-enable it).
-   - `gps.py` — minimal NMEA reader (python3); takes the UTC epoch from the first
-     valid `RMC` (status A, has date) or `ZDA` sentence.
+   - `gps.py` — minimal NMEA reader (python3). This unit's port-7000 stream carries
+     only `GGA/GSA/GSV` (no `RMC`/`ZDA`, which are the sentences that include the
+     date), so it takes the **time-of-day** from `GGA` (fix != 0) and the date from
+     the current system date, rolling +-1 day so a UTC-midnight crossing still
+     works. `RMC`/`ZDA` are also parsed if a stream ever provides them.
    - `gpstime.sh` — sets the clock from it and refreshes the cache.
    `clock_sync` tries NTP first, then GPS (GPS rate-limited to every 5 min).
 
@@ -163,10 +166,14 @@ on the unit and tap **"Enable nmea2socket"** once (the flag persists in mnld).
 - `post-root/apply-autostart.sh` — installs `/data/le1-ntp/`
 - `/data/le1-ntp/` on the device
 
-> Status of the GPS layer: implemented 2026-09-20, **not yet tested on the device**
-> (the unit was powered off when it landed). Next time it is on, deploy the files
-> and run `/data/le1-ntp/gpstime.sh 20` to confirm the port-7000 NMEA stream yields
-> a fix.
+> Status of the GPS layer: implemented and **verified working** (2026-09-21). The
+> port-7000 stream is live (`$GPGGA` with a fix); `gpstime.sh` set the clock
+> (was off 127 s). To re-test:
+> ```bash
+> ssh -p 8022 u0_a50@172.26.39.132 "su -c 'sh /data/le1-ntp/gpstime.sh 20; date'"
+> ```
+> If `gps.py` prints nothing, there is no sky fix yet (or port 7000 is off; open
+> YGPS and tap "Enable nmea2socket").
 
 ## Related
 
