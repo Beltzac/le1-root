@@ -123,8 +123,28 @@ Update `DEBLOAT-PLAN.md` so future applies do not disable it again.
   hand), `clock_sync` (NTP/GPS) runs, the ip rule is single.
 - **Quiet the tailscaled log** -- `ensure_tailscale` logs `tailscaled (re)started`
   every 60 s even when nothing restarted. Log only on an actual start.
-- **Spotify** -- `com.spotify.music` was 50% CPU / 238 MB. Decide: keep, update, or
+- **Spotify** -- `com.spotify.music` was 50% CPU / 238 MB. An update is available
+  (`9.1.36.1948` -> `9.1.84.2231`, still Android 7.0+). Decide: keep/update, or
   disable (`pm disable-user`), then re-check load.
+- **Remove the dead Spotify Lite** -- `com.spotify.lite` (`1.9.0.72404`) is
+  abandoned: no newer build exists anywhere and its login cannot refresh
+  (`oauth_token_refresh_failure` -> media session `STATE_ERROR`, nothing plays,
+  2026-09-23). Remove it AND its carhome launcher button (the `LITE ->
+  com.spotify.lite` 8th slot added 2026-09-23):
+  ```bash
+  # 1) uninstall the app (root)
+  su -c 'pm uninstall com.spotify.lite'          # or: pm uninstall --user 0 com.spotify.lite
+  # 2) drop its launcher button (re-send the grid without LITE)
+  am broadcast -n com.beltzac.carhome/.CommandReceiver -a com.beltzac.carhome.CONFIG \
+    --es ckey launcher --es cvalue '[{"label":"SPOTIFY","pkg":"com.spotify.music","color":"tertiary"},
+      {"label":"MAPS","pkg":"com.google.android.apps.maps","color":"primary"},
+      {"label":"WAZE","pkg":"com.waze","color":"warn"},
+      {"label":"SET","pkg":"com.android.settings","color":"primary"},
+      {"label":"STORE","pkg":"com.android.vending","color":"secondary"},
+      {"label":"TERMUX","pkg":"com.termux","color":"dim"},
+      {"label":"TAILSC","pkg":"com.tailscale.ipn","color":"tertiary"}]'
+  ```
+  Keep `com.spotify.music` as the Spotify client (see the bullet above).
 - **`/system` 89%** -- 146 MB free. Review deleted/renamed `.bak` files and any
   unnecessary `/system` additions.
 - **Tailscale identity** -- two nodes exist (`le1-1` root/online, `le1` app/offline
